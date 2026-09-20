@@ -1,0 +1,7 @@
+{
+  "name": "NexusHunter-AI",
+  "description": "Evidence-backed security research intelligence platform with fail-closed scope enforcement, deterministic security reasoning, competing hypotheses, falsification criteria, and bounded investigations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

@@ -1,0 +1,15 @@
+[
+  "tests/test_analysis.py::test_concurrency_detector",
+  "tests/test_analysis.py::test_config_ssrf_protection",
+  "tests/test_analysis.py::test_evidence_collector",
+  "tests/test_analysis.py::test_evidence_sanitizer",
+  "tests/test_analysis.py::test_idor_auth_detector",
+  "tests/test_analysis.py::test_info_disclosure_detector",
+  "tests/test_analysis.py::test_injection_anomaly_detector",
+  "tests/test_analysis.py::test_reflection_detector",
+  "tests/test_analysis.py::test_security_analyzer_pipeline",
+  "tests/test_analysis.py::test_ssrf_detector",
+  "tests/test_api.py::test_analyze_endpoint",
+  "tests/test_api.py::test_health_endpoint",
+  "tests/test_api.py::test_signals_endpoint"
+]

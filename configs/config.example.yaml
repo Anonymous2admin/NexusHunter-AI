@@ -1,0 +1,19 @@
+# NexusHunter-AI Configuration Template
+app_env: development
+http_port: 8080
+log_level: info
+
+database:
+  url: "postgres://nexushunter:huntersecret123@localhost:5432/nexushunter_db?sslmode=disable"
+  max_open_conns: 25
+  max_idle_conns: 5
+  conn_max_lifetime: 5m
+
+redis:
+  url: "redis://localhost:6379/0"
+
+security:
+  strict_scope_enforcement: true
+  fail_closed_on_missing_scope: true
+  prevent_broad_wildcards: true
+  audit_logging_enabled: true

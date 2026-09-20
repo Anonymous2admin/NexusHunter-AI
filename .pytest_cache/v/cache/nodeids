@@ -1,0 +1,15 @@
+[
+  "backend/ai/tests/test_analysis.py::test_concurrency_detector",
+  "backend/ai/tests/test_analysis.py::test_config_ssrf_protection",
+  "backend/ai/tests/test_analysis.py::test_evidence_collector",
+  "backend/ai/tests/test_analysis.py::test_evidence_sanitizer",
+  "backend/ai/tests/test_analysis.py::test_idor_auth_detector",
+  "backend/ai/tests/test_analysis.py::test_info_disclosure_detector",
+  "backend/ai/tests/test_analysis.py::test_injection_anomaly_detector",
+  "backend/ai/tests/test_analysis.py::test_reflection_detector",
+  "backend/ai/tests/test_analysis.py::test_security_analyzer_pipeline",
+  "backend/ai/tests/test_analysis.py::test_ssrf_detector",
+  "backend/ai/tests/test_api.py::test_analyze_endpoint",
+  "backend/ai/tests/test_api.py::test_health_endpoint",
+  "backend/ai/tests/test_api.py::test_signals_endpoint"
+]

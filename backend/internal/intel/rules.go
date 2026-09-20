@@ -1,0 +1,493 @@
+package intel
+
+import (
+	"regexp"
+	"sync"
+
+	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/models"
+)
+
+var (
+	builtInRules []*FingerprintRule
+	rulesInitOnce sync.Once
+)
+
+// DefaultRules returns the pre-compiled declarative fingerprint rules.
+func DefaultRules() []*FingerprintRule {
+	rulesInitOnce.Do(func() {
+		raw := []*FingerprintRule{
+			// Web Servers
+			{
+				ID:             "ws_nginx",
+				TechnologyName: "Nginx",
+				Category:       "web_server",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "Server",
+				Pattern:        `(?i)^nginx(?:/([0-9.]+))?`,
+				VersionRegex:   `(?i)^nginx/([0-9.]+)`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "ws_apache",
+				TechnologyName: "Apache HTTP Server",
+				Category:       "web_server",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "Server",
+				Pattern:        `(?i)Apache(?:/([0-9.]+))?`,
+				VersionRegex:   `(?i)Apache/([0-9.]+)`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "ws_iis",
+				TechnologyName: "Microsoft IIS",
+				Category:       "web_server",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "Server",
+				Pattern:        `(?i)Microsoft-IIS(?:/([0-9.]+))?`,
+				VersionRegex:   `(?i)Microsoft-IIS/([0-9.]+)`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "ws_caddy",
+				TechnologyName: "Caddy",
+				Category:       "web_server",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "Server",
+				Pattern:        `(?i)^Caddy`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "ws_lighttpd",
+				TechnologyName: "lighttpd",
+				Category:       "web_server",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "Server",
+				Pattern:        `(?i)lighttpd(?:/([0-9.]+))?`,
+				VersionRegex:   `(?i)lighttpd/([0-9.]+)`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "ws_envoy",
+				TechnologyName: "Envoy Proxy",
+				Category:       "reverse_proxy",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "Server",
+				Pattern:        `(?i)^envoy$`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "ws_cloudflare_server",
+				TechnologyName: "Cloudflare",
+				Category:       "cdn",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "Server",
+				Pattern:        `(?i)^cloudflare$`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+
+			// Web Frameworks & Runtimes
+			{
+				ID:             "wf_php_header",
+				TechnologyName: "PHP",
+				Category:       "web_framework",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "X-Powered-By",
+				Pattern:        `(?i)PHP(?:/([0-9.]+))?`,
+				VersionRegex:   `(?i)PHP/([0-9.]+)`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "wf_php_cookie",
+				TechnologyName: "PHP",
+				Category:       "web_framework",
+				MatchTarget:    MatchCookie,
+				Pattern:        `(?i)^PHPSESSID=`,
+				BaseConfidence: models.ConfidenceMedium,
+			},
+			{
+				ID:             "wf_aspnet_header",
+				TechnologyName: "ASP.NET",
+				Category:       "web_framework",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "X-AspNet-Version",
+				Pattern:        `(?i)^([0-9.]+)`,
+				VersionRegex:   `(?i)^([0-9.]+)`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "wf_aspnet_powered",
+				TechnologyName: "ASP.NET",
+				Category:       "web_framework",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "X-Powered-By",
+				Pattern:        `(?i)ASP\.NET`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "wf_aspnet_cookie",
+				TechnologyName: "ASP.NET",
+				Category:       "web_framework",
+				MatchTarget:    MatchCookie,
+				Pattern:        `(?i)^ASP\.NET_SessionId=`,
+				BaseConfidence: models.ConfidenceMedium,
+			},
+			{
+				ID:             "wf_express",
+				TechnologyName: "Express",
+				Category:       "web_framework",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "X-Powered-By",
+				Pattern:        `(?i)^Express$`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "wf_nextjs_header",
+				TechnologyName: "Next.js",
+				Category:       "web_framework",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "X-Powered-By",
+				Pattern:        `(?i)Next\.js`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "wf_nextjs_body",
+				TechnologyName: "Next.js",
+				Category:       "web_framework",
+				MatchTarget:    MatchHTMLBody,
+				Pattern:        `__NEXT_DATA__|<script id="__NEXT_DATA__"`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "wf_nuxt_body",
+				TechnologyName: "Nuxt.js",
+				Category:       "web_framework",
+				MatchTarget:    MatchHTMLBody,
+				Pattern:        `__NUXT__|<div id="__nuxt"`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "wf_rails_cookie",
+				TechnologyName: "Ruby on Rails",
+				Category:       "web_framework",
+				MatchTarget:    MatchCookie,
+				Pattern:        `(?i)_rails_session=|_session_id=`,
+				BaseConfidence: models.ConfidenceLow,
+			},
+			{
+				ID:             "wf_django_cookie",
+				TechnologyName: "Django",
+				Category:       "web_framework",
+				MatchTarget:    MatchCookie,
+				Pattern:        `(?i)^csrftoken=|^sessionid=`,
+				BaseConfidence: models.ConfidenceLow,
+			},
+			{
+				ID:             "wf_laravel_cookie",
+				TechnologyName: "Laravel",
+				Category:       "web_framework",
+				MatchTarget:    MatchCookie,
+				Pattern:        `(?i)^laravel_session=`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "wf_spring_cookie",
+				TechnologyName: "Spring Framework",
+				Category:       "web_framework",
+				MatchTarget:    MatchCookie,
+				Pattern:        `(?i)^JSESSIONID=`,
+				BaseConfidence: models.ConfidenceLow,
+			},
+
+			// JavaScript Frameworks & Libraries
+			{
+				ID:             "js_react_script",
+				TechnologyName: "React",
+				Category:       "js_framework",
+				MatchTarget:    MatchScriptSrc,
+				Pattern:        `(?i)react(?:-dom)?(?:\.production|\.development)?(?:\.min)?\.js`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "js_react_body",
+				TechnologyName: "React",
+				Category:       "js_framework",
+				MatchTarget:    MatchHTMLBody,
+				Pattern:        `data-reactroot|data-reactid|_reactListening`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "js_vue_script",
+				TechnologyName: "Vue.js",
+				Category:       "js_framework",
+				MatchTarget:    MatchScriptSrc,
+				Pattern:        `(?i)vue(?:\.runtime)?(?:\.min)?\.js`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "js_vue_body",
+				TechnologyName: "Vue.js",
+				Category:       "js_framework",
+				MatchTarget:    MatchHTMLBody,
+				Pattern:        `data-v-[0-9a-fA-F]{6,8}`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "js_angular_script",
+				TechnologyName: "Angular",
+				Category:       "js_framework",
+				MatchTarget:    MatchScriptSrc,
+				Pattern:        `(?i)angular(?:\.min)?\.js`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "js_angular_body",
+				TechnologyName: "Angular",
+				Category:       "js_framework",
+				MatchTarget:    MatchHTMLBody,
+				Pattern:        `ng-version="([0-9.]+)"|ng-app|ng-binding`,
+				VersionRegex:   `ng-version="([0-9.]+)"`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "js_jquery_script",
+				TechnologyName: "jQuery",
+				Category:       "js_framework",
+				MatchTarget:    MatchScriptSrc,
+				Pattern:        `(?i)jquery(?:-([0-9.]+))?(?:\.min)?\.js`,
+				VersionRegex:   `(?i)jquery-([0-9.]+)(?:\.min)?\.js`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "js_alpine_script",
+				TechnologyName: "Alpine.js",
+				Category:       "js_framework",
+				MatchTarget:    MatchScriptSrc,
+				Pattern:        `(?i)alpine(?:\.min)?\.js`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "js_alpine_body",
+				TechnologyName: "Alpine.js",
+				Category:       "js_framework",
+				MatchTarget:    MatchHTMLBody,
+				Pattern:        `x-data=|x-init=|x-bind=`,
+				BaseConfidence: models.ConfidenceMedium,
+			},
+
+			// Content Management Systems (CMS)
+			{
+				ID:             "cms_wordpress_meta",
+				TechnologyName: "WordPress",
+				Category:       "cms",
+				MatchTarget:    MatchHTMLMeta,
+				MetaName:       "generator",
+				Pattern:        `(?i)WordPress(?: ([0-9.]+))?`,
+				VersionRegex:   `(?i)WordPress ([0-9.]+)`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "cms_wordpress_body",
+				TechnologyName: "WordPress",
+				Category:       "cms",
+				MatchTarget:    MatchHTMLBody,
+				Pattern:        `/wp-content/|/wp-includes/`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "cms_drupal_meta",
+				TechnologyName: "Drupal",
+				Category:       "cms",
+				MatchTarget:    MatchHTMLMeta,
+				MetaName:       "generator",
+				Pattern:        `(?i)Drupal(?: ([0-9.]+))?`,
+				VersionRegex:   `(?i)Drupal ([0-9.]+)`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "cms_drupal_header",
+				TechnologyName: "Drupal",
+				Category:       "cms",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "X-Generator",
+				Pattern:        `(?i)Drupal(?: ([0-9.]+))?`,
+				VersionRegex:   `(?i)Drupal ([0-9.]+)`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "cms_joomla_meta",
+				TechnologyName: "Joomla",
+				Category:       "cms",
+				MatchTarget:    MatchHTMLMeta,
+				MetaName:       "generator",
+				Pattern:        `(?i)Joomla!(?: - Open Source Content Management)?`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "cms_ghost_meta",
+				TechnologyName: "Ghost",
+				Category:       "cms",
+				MatchTarget:    MatchHTMLMeta,
+				MetaName:       "generator",
+				Pattern:        `(?i)Ghost(?: ([0-9.]+))?`,
+				VersionRegex:   `(?i)Ghost ([0-9.]+)`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "cms_shopify_body",
+				TechnologyName: "Shopify",
+				Category:       "cms",
+				MatchTarget:    MatchHTMLBody,
+				Pattern:        `cdn\.shopify\.com|Shopify\.theme`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+
+			// CDN / Reverse Proxies
+			{
+				ID:             "cdn_cloudflare_cfray",
+				TechnologyName: "Cloudflare",
+				Category:       "cdn",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "CF-Ray",
+				Pattern:        `.+`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "cdn_fastly_header",
+				TechnologyName: "Fastly",
+				Category:       "cdn",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "X-Served-By",
+				Pattern:        `(?i)cache-`,
+				BaseConfidence: models.ConfidenceMedium,
+			},
+			{
+				ID:             "cdn_fastly_timer",
+				TechnologyName: "Fastly",
+				Category:       "cdn",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "Fastly-Debug-Digest",
+				Pattern:        `.+`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "cdn_cloudfront_header",
+				TechnologyName: "Amazon CloudFront",
+				Category:       "cdn",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "X-Amz-Cf-Id",
+				Pattern:        `.+`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "cdn_cloudfront_via",
+				TechnologyName: "Amazon CloudFront",
+				Category:       "cdn",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "Via",
+				Pattern:        `(?i)CloudFront`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "cdn_akamai_header",
+				TechnologyName: "Akamai",
+				Category:       "cdn",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "X-Akamai-Transformed",
+				Pattern:        `.+`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "proxy_varnish_via",
+				TechnologyName: "Varnish",
+				Category:       "reverse_proxy",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "Via",
+				Pattern:        `(?i)varnish`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "proxy_haproxy_cookie",
+				TechnologyName: "HAProxy",
+				Category:       "reverse_proxy",
+				MatchTarget:    MatchCookie,
+				Pattern:        `(?i)^SERVERID=`,
+				BaseConfidence: models.ConfidenceMedium,
+			},
+
+			// Hosting / PaaS
+			{
+				ID:             "host_vercel_header",
+				TechnologyName: "Vercel",
+				Category:       "hosting",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "X-Vercel-Id",
+				Pattern:        `.+`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "host_netlify_header",
+				TechnologyName: "Netlify",
+				Category:       "hosting",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "X-NF-Request-ID",
+				Pattern:        `.+`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "host_heroku_header",
+				TechnologyName: "Heroku",
+				Category:       "hosting",
+				MatchTarget:    MatchHeader,
+				HeaderKey:      "Via",
+				Pattern:        `(?i)vegur`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+
+			// Analytics / Trackers
+			{
+				ID:             "analytics_gtm",
+				TechnologyName: "Google Tag Manager",
+				Category:       "analytics",
+				MatchTarget:    MatchHTMLBody,
+				Pattern:        `googletagmanager\.com/gtm\.js|googletagmanager\.com/gtag/js`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "analytics_ga",
+				TechnologyName: "Google Analytics",
+				Category:       "analytics",
+				MatchTarget:    MatchHTMLBody,
+				Pattern:        `google-analytics\.com/analytics\.js|ga\('create'`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "analytics_plausible",
+				TechnologyName: "Plausible Analytics",
+				Category:       "analytics",
+				MatchTarget:    MatchScriptSrc,
+				Pattern:        `plausible\.io/js/script\.js`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+			{
+				ID:             "analytics_hotjar",
+				TechnologyName: "Hotjar",
+				Category:       "analytics",
+				MatchTarget:    MatchHTMLBody,
+				Pattern:        `static\.hotjar\.com/c/hotjar-`,
+				BaseConfidence: models.ConfidenceHigh,
+			},
+		}
+
+		for _, r := range raw {
+			if r.Pattern != "" {
+				r.compiledRegex, _ = regexp.Compile(r.Pattern)
+			}
+			if r.VersionRegex != "" {
+				r.compiledVersionRegex, _ = regexp.Compile(r.VersionRegex)
+			}
+			builtInRules = append(builtInRules, r)
+		}
+	})
+
+	return builtInRules
+}
