@@ -1164,6 +1164,381 @@ let evidenceTimelineStore: any[] = [
   },
 ];
 
+// ==========================================
+// Phase 7: Deterministic Reasoning & Investigation Stores
+// ==========================================
+
+const evidenceStore = evidenceRecordsStore;
+
+function validateSignalTransition(current: string, next: string): boolean {
+  if (current === next) return true;
+  switch (current) {
+    case 'OPEN':
+      return next === 'CORRELATED' || next === 'DISMISSED';
+    case 'CORRELATED':
+      return next === 'SUPERSEDED' || next === 'DISMISSED';
+    case 'SUPERSEDED':
+      return false; // Terminal state
+    case 'DISMISSED':
+      return next === 'OPEN'; // Reopen
+    default:
+      return false;
+  }
+}
+
+function validateHypothesisTransition(current: string, next: string): boolean {
+  if (current === next) return true;
+  switch (current) {
+    case 'HYPOTHESIZED':
+      return next === 'INVESTIGATING' || next === 'DISMISSED';
+    case 'INVESTIGATING':
+      return next === 'SUPPORTED' || next === 'FALSIFIED' || next === 'UNKNOWN' || next === 'DISMISSED';
+    case 'SUPPORTED':
+      return next === 'FALSIFIED' || next === 'INVESTIGATING';
+    case 'FALSIFIED':
+      return false; // Terminal state
+    case 'UNKNOWN':
+      return next === 'INVESTIGATING' || next === 'DISMISSED';
+    case 'DISMISSED':
+      return next === 'HYPOTHESIZED'; // Reopen
+    default:
+      return false;
+  }
+}
+
+function validateInvestigationTransition(current: string, next: string): boolean {
+  if (current === next) return true;
+  switch (current) {
+    case 'PLANNED':
+      return next === 'QUEUED' || next === 'RUNNING' || next === 'CANCELLED';
+    case 'QUEUED':
+      return next === 'RUNNING' || next === 'CANCELLED';
+    case 'RUNNING':
+      return next === 'COMPLETED' || next === 'FAILED' || next === 'CANCELLED';
+    case 'COMPLETED':
+    case 'FAILED':
+    case 'CANCELLED':
+      return false; // Terminal states
+    default:
+      return false;
+  }
+}
+
+const reasoningSignalsStore: any[] = [
+  {
+    id: 'sig-01',
+    target_id: 'tgt-alpha-001',
+    asset_id: 'ast-02',
+    endpoint: '/v1/auth/token',
+    signal_type: 'AUTH_INCONSISTENCY',
+    category: 'AUTHENTICATION',
+    title: 'Unauthenticated Token Reflection on Sensitive Route',
+    description: 'Endpoint returns active token structure when queried without Authorization header, contradicting documented OAuth 2.0 bearer specification.',
+    epistemic_status: 'OBSERVED',
+    status: 'OPEN',
+    severity_of_attention: 'HIGH',
+    source_observations: ['obs-sec-01', 'con-01'],
+    source_evidence: ['ev-01'],
+    detector: 'ContradictionBridgeDetector',
+    detector_version: '7.0.0',
+    metadata: { route: '/v1/auth/token', observed_status: 200 },
+    created_at: new Date(Date.now() - 3600000).toISOString(),
+    updated_at: new Date(Date.now() - 3600000).toISOString(),
+  },
+  {
+    id: 'sig-02',
+    target_id: 'tgt-alpha-001',
+    asset_id: 'ast-02',
+    endpoint: '/api/v1/users',
+    signal_type: 'HTTP_SECURITY_CONTROL_DIFF',
+    category: 'SECURITY_CONTROL',
+    title: 'Differential Permissive CORS Header on API Gateway',
+    description: 'Access-Control-Allow-Origin: * emitted on internal user endpoint while baseline gateway blocks untrusted origins.',
+    epistemic_status: 'OBSERVED',
+    status: 'CORRELATED',
+    severity_of_attention: 'MEDIUM',
+    source_observations: ['obs-diff-01', 'out-01'],
+    source_evidence: ['ediff-01'],
+    detector: 'DifferentialAnalysisDetector',
+    detector_version: '7.0.0',
+    metadata: { header: 'Access-Control-Allow-Origin', value: '*' },
+    created_at: new Date(Date.now() - 3400000).toISOString(),
+    updated_at: new Date(Date.now() - 3400000).toISOString(),
+  },
+  {
+    id: 'sig-03',
+    target_id: 'tgt-alpha-001',
+    asset_id: 'ast-01',
+    endpoint: '/admin/metrics',
+    signal_type: 'UNEXPECTED_ENDPOINT_BEHAVIOR',
+    category: 'AUTHORIZATION',
+    title: 'Direct Origin Exposure Bypassing WAF Boundary',
+    description: 'Direct IP requests reach origin daemon on port 8080 without Cloudflare Ray ID header validation.',
+    epistemic_status: 'OBSERVED',
+    status: 'OPEN',
+    severity_of_attention: 'HIGH',
+    source_observations: ['obs-out-02'],
+    source_evidence: ['ev-03'],
+    detector: 'BoundaryExposureDetector',
+    detector_version: '7.0.0',
+    metadata: { port: 8080, bypass: true },
+    created_at: new Date(Date.now() - 3000000).toISOString(),
+    updated_at: new Date(Date.now() - 3000000).toISOString(),
+  },
+];
+
+const hypothesisGroupsStore: any[] = [
+  {
+    id: 'hg-01',
+    target_id: 'tgt-alpha-001',
+    asset_id: 'ast-02',
+    subject: 'Authentication Boundary & Token Handling on /v1/auth/token',
+    competing_theories_count: 2,
+    created_at: new Date(Date.now() - 3600000).toISOString(),
+    updated_at: new Date(Date.now() - 3600000).toISOString(),
+  },
+  {
+    id: 'hg-02',
+    target_id: 'tgt-alpha-001',
+    asset_id: 'ast-01',
+    subject: 'Direct Origin Ingress Bypassing Cloudflare Edge Controls',
+    competing_theories_count: 1,
+    created_at: new Date(Date.now() - 3000000).toISOString(),
+    updated_at: new Date(Date.now() - 3000000).toISOString(),
+  },
+];
+
+const hypothesesStore: any[] = [
+  {
+    id: 'hyp-01',
+    target_id: 'tgt-alpha-001',
+    asset_id: 'ast-02',
+    group_id: 'hg-01',
+    category: 'AUTH_POLICY_DIFF',
+    title: 'Unauthenticated Token Issuance via Inadvertent Test Mock or Debug Bypass',
+    description: 'The endpoint /v1/auth/token emits active credentials without authorization headers, indicating either a debug route inadvertently deployed to production or an auth gateway routing flaw.',
+    epistemic_status: 'HYPOTHESIZED',
+    status: 'HYPOTHESIZED',
+    reasoning_method: 'ABDUCTIVE',
+    evidence_strength: 4,
+    investigation_priority: 92,
+    supporting_evidence: ['ev-01'],
+    contradicting_evidence: [],
+    missing_evidence: ['Response behavior with invalid Bearer token', 'JWT signature validation check'],
+    falsification_conditions: [
+      {
+        condition_description: 'Validating cryptographic signature of emitted token fails against public JWKS key',
+        required_evidence: 'Token JWKS signature verification result',
+        validation_method: 'NON_DESTRUCTIVE_SIGNATURE_CHECK',
+        result: 'PENDING',
+      },
+      {
+        condition_description: 'Emitted token is rejected by protected API downstream service with 401',
+        required_evidence: 'Downstream /api/v1/user probe with emitted token',
+        validation_method: 'SAFE_REPLAY_TEST',
+        result: 'PENDING',
+      },
+    ],
+    metadata: { confidence_level: 0.85 },
+    created_at: new Date(Date.now() - 3600000).toISOString(),
+    updated_at: new Date(Date.now() - 3600000).toISOString(),
+  },
+  {
+    id: 'hyp-02',
+    target_id: 'tgt-alpha-001',
+    asset_id: 'ast-02',
+    group_id: 'hg-01',
+    category: 'INTENTIONAL_PUBLIC',
+    title: 'Public Anonymous Guest Session Token Issuance',
+    description: 'The /v1/auth/token endpoint intentionally issues limited-privilege guest sessions anonymously as part of onboarding flow.',
+    epistemic_status: 'HYPOTHESIZED',
+    status: 'HYPOTHESIZED',
+    reasoning_method: 'COMPETING_THEORY',
+    evidence_strength: 2,
+    investigation_priority: 45,
+    supporting_evidence: ['ev-01'],
+    contradicting_evidence: [],
+    missing_evidence: ['Scope claims inside decoded JWT payload'],
+    falsification_conditions: [
+      {
+        condition_description: 'Token payload claims reveal "admin" or elevated roles rather than "guest" or "anonymous"',
+        required_evidence: 'Decoded JWT claims inspecting roles/scopes',
+        validation_method: 'PAYLOAD_ANALYSIS',
+        result: 'PENDING',
+      },
+    ],
+    metadata: { confidence_level: 0.35 },
+    created_at: new Date(Date.now() - 3600000).toISOString(),
+    updated_at: new Date(Date.now() - 3600000).toISOString(),
+  },
+  {
+    id: 'hyp-03',
+    target_id: 'tgt-alpha-001',
+    asset_id: 'ast-01',
+    group_id: 'hg-02',
+    category: 'WAF_BYPASS',
+    title: 'Direct Origin IP Reachability Exposing Internal Management Ports',
+    description: 'Origin server responds to direct IP connections on port 8080 without requiring Cloudflare mTLS or authenticated origin pull headers.',
+    epistemic_status: 'HYPOTHESIZED',
+    status: 'INVESTIGATING',
+    reasoning_method: 'DEDUCTIVE',
+    evidence_strength: 4,
+    investigation_priority: 88,
+    supporting_evidence: ['ev-03'],
+    contradicting_evidence: [],
+    missing_evidence: ['Origin security group firewall rules'],
+    falsification_conditions: [
+      {
+        condition_description: 'Direct origin connection drops or rejects TCP SYN without Cloudflare IP range',
+        required_evidence: 'SYN packet probe from non-Cloudflare egress',
+        validation_method: 'TCP_PORT_PROBE',
+        result: 'PENDING',
+      },
+    ],
+    metadata: { confidence_level: 0.9 },
+    created_at: new Date(Date.now() - 3000000).toISOString(),
+    updated_at: new Date(Date.now() - 3000000).toISOString(),
+  },
+];
+
+const investigationsStore: any[] = [
+  {
+    id: 'inv-01',
+    target_id: 'tgt-alpha-001',
+    asset_id: 'ast-02',
+    hypothesis_id: 'hyp-01',
+    title: 'Controlled Non-Destructive Token Decoupling & Claim Verification',
+    status: 'PLANNED',
+    safety_boundary: {
+      is_non_destructive: true,
+      requires_credential: false,
+      max_requests_per_second: 2,
+      max_total_requests: 10,
+      read_only: true,
+      allowed_endpoints: ['/v1/auth/token', '/v1/auth/jwks.json'],
+    },
+    steps: [
+      {
+        step_number: 1,
+        name: 'Retrieve JWKS Public Key Set',
+        description: 'Fetch public key set from standard discovery endpoint to evaluate signature veracity',
+        action_type: 'CAPTURE_BASELINE',
+        status: 'PENDING',
+      },
+      {
+        step_number: 2,
+        name: 'Inspect Issued Token Claims for Elevated Scopes',
+        description: 'Parse unauthenticated token payload without executing unauthorized actions',
+        action_type: 'COMPARE_CONTEXTS',
+        status: 'PENDING',
+      },
+    ],
+    generated_evidence: [],
+    falsification_result: 'UNDETERMINED',
+    created_at: new Date(Date.now() - 1800000).toISOString(),
+    updated_at: new Date(Date.now() - 1800000).toISOString(),
+  },
+];
+
+const trustBoundariesStore: any[] = [
+  {
+    id: 'tb-01',
+    asset_id: 'ast-02',
+    boundary_name: 'Edge API Gateway to Internal Microservices',
+    boundary_type: 'API_GATEWAY',
+    ingress_protocol: 'HTTPS',
+    egress_protocol: 'HTTP/Internal',
+    authentication_required: true,
+    authorization_model: 'RBAC_BEARER',
+    data_classification: 'CONFIDENTIAL',
+    created_at: new Date(Date.now() - 86400000).toISOString(),
+  },
+  {
+    id: 'tb-02',
+    asset_id: 'ast-01',
+    boundary_name: 'Cloudflare Edge CDN to Origin Ingress',
+    boundary_type: 'CDN_EDGE',
+    ingress_protocol: 'HTTPS',
+    egress_protocol: 'HTTPS',
+    authentication_required: false,
+    authorization_model: 'ORIGIN_PULL_CERT',
+    data_classification: 'PUBLIC',
+    created_at: new Date(Date.now() - 86400000).toISOString(),
+  },
+];
+
+const permissionMatrixStore: any[] = [
+  {
+    id: 'pm-01',
+    asset_id: 'ast-02',
+    endpoint: '/api/v1/users',
+    role: 'ANONYMOUS',
+    expected_access: 'DENIED',
+    observed_access: 'ALLOWED',
+    has_anomaly: true,
+    last_verified: new Date(Date.now() - 3600000).toISOString(),
+  },
+  {
+    id: 'pm-02',
+    asset_id: 'ast-02',
+    endpoint: '/api/v1/users',
+    role: 'USER',
+    expected_access: 'ALLOWED',
+    observed_access: 'ALLOWED',
+    has_anomaly: false,
+    last_verified: new Date(Date.now() - 3600000).toISOString(),
+  },
+  {
+    id: 'pm-03',
+    asset_id: 'ast-02',
+    endpoint: '/admin/metrics',
+    role: 'USER',
+    expected_access: 'DENIED',
+    observed_access: 'DENIED',
+    has_anomaly: false,
+    last_verified: new Date(Date.now() - 3600000).toISOString(),
+  },
+];
+
+const securityControlsStore: any[] = [
+  {
+    id: 'sc-01',
+    asset_id: 'ast-02',
+    control_name: 'Strict-Transport-Security',
+    control_type: 'HTTP_HEADER',
+    enforcement_state: 'ENFORCED',
+    configuration_details: 'max-age=31536000; includeSubDomains',
+    last_audited: new Date(Date.now() - 7200000).toISOString(),
+  },
+  {
+    id: 'sc-02',
+    asset_id: 'ast-02',
+    control_name: 'CORS Origin Whitelist',
+    control_type: 'ACCESS_POLICY',
+    enforcement_state: 'MISCONFIGURED',
+    configuration_details: 'Wildcard * returned on authenticated endpoints',
+    last_audited: new Date(Date.now() - 3600000).toISOString(),
+  },
+];
+
+const authContextsStore: any[] = [
+  {
+    id: 'ac-01',
+    target_id: 'tgt-alpha-001',
+    name: 'Anonymous Guest Session',
+    auth_type: 'NONE',
+    headers: {},
+    is_active: true,
+  },
+  {
+    id: 'ac-02',
+    target_id: 'tgt-alpha-001',
+    name: 'Standard User Token',
+    auth_type: 'BEARER_JWT',
+    headers: { Authorization: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...' },
+    is_active: true,
+  },
+];
 
 function nexusApiPlugin(): Plugin {
   return {
@@ -1990,6 +2365,25 @@ function nexusApiPlugin(): Plugin {
         }
 
         // 32. GET /api/evidence/:id
+        const evIntegMatch = url.match(/^\/api\/evidence\/([^\/?]+)\/integrity$/);
+        if (evIntegMatch && req.method === 'GET') {
+          const evId = evIntegMatch[1];
+          const ev = evidenceRecordsStore.find((e) => e.id === evId);
+          if (!ev) {
+            res.statusCode = 404;
+            return res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Evidence record not found' } }));
+          }
+          res.statusCode = 200;
+          return res.end(JSON.stringify({
+            evidence_id: ev.id,
+            original_sha256: ev.sha256,
+            computed_sha256: ev.sha256,
+            is_tampered: false,
+            verified_at: new Date().toISOString(),
+            canonical_matches: true,
+          }));
+        }
+
         const evMatch = url.match(/^\/api\/evidence\/([^\/?]+)$/);
         if (evMatch && req.method === 'GET') {
           const evId = evMatch[1];
@@ -2256,6 +2650,497 @@ function nexusApiPlugin(): Plugin {
           const list = evidenceTimelineStore.filter((t) => t.target_id === targetId);
           res.statusCode = 200;
           return res.end(JSON.stringify({ target_id: targetId, events: list, count: list.length }));
+        }
+
+        // ==========================================
+        // Phase 7 Endpoints: Reasoning & Investigations
+        // ==========================================
+
+        // 46. GET /api/signals
+        const signalsMatch = url.match(/^\/api\/signals(\?.*)?$/);
+        if (signalsMatch && req.method === 'GET') {
+          const u = new URL(url, 'http://localhost');
+          const targetId = u.searchParams.get('target_id');
+          const assetId = u.searchParams.get('asset_id');
+          let list = [...reasoningSignalsStore];
+          if (targetId) list = list.filter((s) => s.target_id === targetId);
+          if (assetId) list = list.filter((s) => s.asset_id === assetId);
+          res.statusCode = 200;
+          return res.end(JSON.stringify(list));
+        }
+
+        // 47. GET /api/signals/:id
+        const sigGetMatch = url.match(/^\/api\/signals\/([^\/?]+)$/);
+        if (sigGetMatch && req.method === 'GET') {
+          const sigId = sigGetMatch[1];
+          const sig = reasoningSignalsStore.find((s) => s.id === sigId);
+          if (!sig) {
+            res.statusCode = 404;
+            return res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Signal not found' } }));
+          }
+          res.statusCode = 200;
+          return res.end(JSON.stringify(sig));
+        }
+
+        // 48. PATCH /api/signals/:id/status
+        const sigStatusMatch = url.match(/^\/api\/signals\/([^\/?]+)\/status$/);
+        if (sigStatusMatch && req.method === 'PATCH') {
+          const sigId = sigStatusMatch[1];
+          const body = await readBody();
+          const sig = reasoningSignalsStore.find((s) => s.id === sigId);
+          if (!sig) {
+            res.statusCode = 404;
+            return res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Signal not found' } }));
+          }
+          if (!validateSignalTransition(sig.status, body.status)) {
+            res.statusCode = 400;
+            return res.end(JSON.stringify({
+              error: {
+                code: 'INVALID_STATE_TRANSITION',
+                message: `cannot transition signal from ${sig.status} to ${body.status}`,
+              },
+            }));
+          }
+          sig.status = body.status;
+          sig.updated_at = new Date().toISOString();
+          res.statusCode = 200;
+          return res.end(JSON.stringify({ status: sig.status, updated_at: sig.updated_at }));
+        }
+
+        // 49. GET /api/hypotheses
+        const hypothesesMatch = url.match(/^\/api\/hypotheses(\?.*)?$/);
+        if (hypothesesMatch && req.method === 'GET') {
+          const u = new URL(url, 'http://localhost');
+          const targetId = u.searchParams.get('target_id');
+          const groupId = u.searchParams.get('group_id');
+          let list = [...hypothesesStore];
+          if (targetId) list = list.filter((h) => h.target_id === targetId);
+          if (groupId) list = list.filter((h) => h.group_id === groupId);
+          res.statusCode = 200;
+          return res.end(JSON.stringify(list));
+        }
+
+        // 50. POST /api/hypotheses
+        if (url === '/api/hypotheses' && req.method === 'POST') {
+          const body = await readBody();
+          const newHyp = {
+            id: body.id || `hyp-${Date.now().toString(36)}`,
+            target_id: body.target_id || 'tgt-alpha-001',
+            asset_id: body.asset_id || 'ast-02',
+            group_id: body.group_id || 'hg-01',
+            category: body.category || 'AUTH_POLICY_DIFF',
+            title: body.title || 'Untitled Hypothesis',
+            description: body.description || '',
+            epistemic_status: body.epistemic_status || 'HYPOTHESIZED',
+            status: body.status || 'HYPOTHESIZED',
+            reasoning_method: body.reasoning_method || 'ABDUCTIVE',
+            evidence_strength: body.evidence_strength || 3,
+            investigation_priority: body.investigation_priority || 50,
+            supporting_evidence: body.supporting_evidence || [],
+            contradicting_evidence: body.contradicting_evidence || [],
+            missing_evidence: body.missing_evidence || [],
+            falsification_conditions: body.falsification_conditions || [],
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
+          hypothesesStore.unshift(newHyp);
+          res.statusCode = 201;
+          return res.end(JSON.stringify(newHyp));
+        }
+
+        // 51. GET /api/hypotheses/:id
+        const hypGetMatch = url.match(/^\/api\/hypotheses\/([^\/?]+)$/);
+        if (hypGetMatch && req.method === 'GET') {
+          const hypId = hypGetMatch[1];
+          const hyp = hypothesesStore.find((h) => h.id === hypId);
+          if (!hyp) {
+            res.statusCode = 404;
+            return res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Hypothesis not found' } }));
+          }
+          res.statusCode = 200;
+          return res.end(JSON.stringify(hyp));
+        }
+
+        // 52. POST /api/hypotheses/:id/status
+        const hypStatusMatch = url.match(/^\/api\/hypotheses\/([^\/?]+)\/status$/);
+        if (hypStatusMatch && req.method === 'POST') {
+          const hypId = hypStatusMatch[1];
+          const body = await readBody();
+          const hyp = hypothesesStore.find((h) => h.id === hypId);
+          if (!hyp) {
+            res.statusCode = 404;
+            return res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Hypothesis not found' } }));
+          }
+          if (!validateHypothesisTransition(hyp.status, body.status)) {
+            res.statusCode = 400;
+            return res.end(JSON.stringify({
+              error: {
+                code: 'INVALID_STATE_TRANSITION',
+                message: `cannot transition hypothesis from ${hyp.status} to ${body.status}`,
+              },
+            }));
+          }
+          hyp.status = body.status;
+          hyp.updated_at = new Date().toISOString();
+          res.statusCode = 200;
+          return res.end(JSON.stringify({ status: hyp.status, updated_at: hyp.updated_at }));
+        }
+
+        // 53. GET /api/hypotheses/:id/evidence
+        const hypEvMatch = url.match(/^\/api\/hypotheses\/([^\/?]+)\/evidence$/);
+        if (hypEvMatch && req.method === 'GET') {
+          const hypId = hypEvMatch[1];
+          const hyp = hypothesesStore.find((h) => h.id === hypId);
+          if (!hyp) {
+            res.statusCode = 404;
+            return res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Hypothesis not found' } }));
+          }
+          const evList = (hyp.supporting_evidence || []).map((id: string) =>
+            evidenceStore.find((e) => e.id === id)
+          ).filter(Boolean);
+          res.statusCode = 200;
+          return res.end(JSON.stringify(evList));
+        }
+
+        // 54. GET /api/hypotheses/:id/alternatives
+        const hypAltMatch = url.match(/^\/api\/hypotheses\/([^\/?]+)\/alternatives$/);
+        if (hypAltMatch && req.method === 'GET') {
+          const hypId = hypAltMatch[1];
+          const hyp = hypothesesStore.find((h) => h.id === hypId);
+          if (!hyp) {
+            res.statusCode = 404;
+            return res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Hypothesis not found' } }));
+          }
+          const alts = hypothesesStore.filter((h) => h.group_id === hyp.group_id && h.id !== hyp.id);
+          res.statusCode = 200;
+          return res.end(JSON.stringify(alts));
+        }
+
+        // 55. GET /api/hypothesis-groups
+        const grpMatch = url.match(/^\/api\/hypothesis-groups(\?.*)?$/);
+        if (grpMatch && req.method === 'GET') {
+          const u = new URL(url, 'http://localhost');
+          const targetId = u.searchParams.get('target_id');
+          let list = [...hypothesisGroupsStore];
+          if (targetId) list = list.filter((g) => g.target_id === targetId);
+          res.statusCode = 200;
+          return res.end(JSON.stringify(list));
+        }
+
+        // 56. GET /api/hypothesis-groups/:id
+        const grpGetMatch = url.match(/^\/api\/hypothesis-groups\/([^\/?]+)$/);
+        if (grpGetMatch && req.method === 'GET') {
+          const grpId = grpGetMatch[1];
+          const grp = hypothesisGroupsStore.find((g) => g.id === grpId);
+          if (!grp) {
+            res.statusCode = 404;
+            return res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Hypothesis group not found' } }));
+          }
+          res.statusCode = 200;
+          return res.end(JSON.stringify(grp));
+        }
+
+        // 57. GET /api/investigations
+        const invListMatch = url.match(/^\/api\/investigations(\?.*)?$/);
+        if (invListMatch && req.method === 'GET') {
+          const u = new URL(url, 'http://localhost');
+          const targetId = u.searchParams.get('target_id');
+          let list = [...investigationsStore];
+          if (targetId) list = list.filter((i) => i.target_id === targetId);
+          res.statusCode = 200;
+          return res.end(JSON.stringify(list));
+        }
+
+        // 58. POST /api/investigations
+        if (url === '/api/investigations' && req.method === 'POST') {
+          const body = await readBody();
+          const hypId = body.hypothesis_id;
+          const hyp = hypothesesStore.find((h) => h.id === hypId);
+          const newInv = {
+            id: `inv-${Date.now().toString(36)}`,
+            target_id: hyp?.target_id || body.target_id || 'tgt-alpha-001',
+            asset_id: hyp?.asset_id || body.asset_id || 'ast-02',
+            hypothesis_id: hypId || 'hyp-01',
+            title: `Investigation: ${hyp?.title || 'Security Hypothesis'}`,
+            status: 'PLANNED',
+            safety_boundary: {
+              is_non_destructive: true,
+              requires_credential: false,
+              max_requests_per_second: 2,
+              max_total_requests: 10,
+              read_only: true,
+              allowed_endpoints: ['/v1/auth/token'],
+            },
+            steps: [
+              {
+                step_number: 1,
+                name: 'Baseline Probe Acquisition',
+                description: 'Collect non-destructive live telemetry matching hypothesis conditions',
+                action_type: 'CAPTURE_BASELINE',
+                status: 'PENDING',
+              },
+              {
+                step_number: 2,
+                name: 'Comparative Evaluation',
+                description: 'Check differential response against expected access policy',
+                action_type: 'COMPARE_CONTEXTS',
+                status: 'PENDING',
+              },
+            ],
+            generated_evidence: [],
+            falsification_result: 'UNDETERMINED',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
+          investigationsStore.unshift(newInv);
+          res.statusCode = 201;
+          return res.end(JSON.stringify(newInv));
+        }
+
+        // 59. GET /api/investigations/:id
+        const invGetMatch = url.match(/^\/api\/investigations\/([^\/?]+)$/);
+        if (invGetMatch && req.method === 'GET') {
+          const invId = invGetMatch[1];
+          const inv = investigationsStore.find((i) => i.id === invId);
+          if (!inv) {
+            res.statusCode = 404;
+            return res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Investigation not found' } }));
+          }
+          res.statusCode = 200;
+          return res.end(JSON.stringify(inv));
+        }
+
+        // 60. POST /api/investigations/:id/cancel
+        const invCancelMatch = url.match(/^\/api\/investigations\/([^\/?]+)\/cancel$/);
+        if (invCancelMatch && req.method === 'POST') {
+          const invId = invCancelMatch[1];
+          const inv = investigationsStore.find((i) => i.id === invId);
+          if (!inv) {
+            res.statusCode = 404;
+            return res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Investigation not found' } }));
+          }
+          if (!validateInvestigationTransition(inv.status, 'CANCELLED')) {
+            res.statusCode = 400;
+            return res.end(JSON.stringify({
+              error: {
+                code: 'INVALID_STATE_TRANSITION',
+                message: `cannot cancel investigation in state ${inv.status}`,
+              },
+            }));
+          }
+          inv.status = 'CANCELLED';
+          inv.updated_at = new Date().toISOString();
+          res.statusCode = 200;
+          return res.end(JSON.stringify({ status: 'CANCELLED', id: inv.id }));
+        }
+
+        // 61. POST /api/investigations/:id/execute
+        const invExecMatch = url.match(/^\/api\/investigations\/([^\/?]+)\/execute$/);
+        if (invExecMatch && req.method === 'POST') {
+          const invId = invExecMatch[1];
+          const inv = investigationsStore.find((i) => i.id === invId);
+          if (!inv) {
+            res.statusCode = 404;
+            return res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Investigation not found' } }));
+          }
+          if (inv.status === 'COMPLETED' || inv.status === 'CANCELLED') {
+            res.statusCode = 400;
+            return res.end(JSON.stringify({
+              error: {
+                code: 'INVALID_STATE_TRANSITION',
+                message: `cannot execute steps on investigation in state ${inv.status}`,
+              },
+            }));
+          }
+
+          // Advance to RUNNING if PLANNED/QUEUED
+          if (inv.status === 'PLANNED' || inv.status === 'QUEUED') {
+            inv.status = 'RUNNING';
+          }
+
+          const pendingStep = inv.steps?.find((s: any) => s.status === 'PENDING');
+          if (!pendingStep) {
+            inv.status = 'COMPLETED';
+            res.statusCode = 200;
+            return res.end(JSON.stringify(inv));
+          }
+
+          pendingStep.status = 'COMPLETED';
+          pendingStep.executed_at = new Date().toISOString();
+          const generatedEvId = `ev-inv-${Date.now().toString(36)}`;
+          pendingStep.result_evidence_id = generatedEvId;
+          inv.generated_evidence = inv.generated_evidence || [];
+          inv.generated_evidence.push(generatedEvId);
+
+          // Add generated evidence to store
+          evidenceStore.unshift({
+            id: generatedEvId,
+            target_id: inv.target_id,
+            asset_id: inv.asset_id,
+            source: 'CONTROLLED_VALIDATION',
+            evidence_type: 'HTTP_REQUEST',
+            summary: `Automated baseline telemetry from investigation step: ${pendingStep.name}`,
+            captured_at: new Date().toISOString(),
+            status_code: 200,
+            request: {
+              method: 'GET',
+              url: `https://target-${inv.target_id.slice(0, 8)}.internal/baseline`,
+              headers: { 'User-Agent': 'NexusHunter-InvestigationEngine/7.0' },
+              body_length: 0,
+              is_authenticated: false,
+            },
+            response: {
+              status_code: 200,
+              headers: { 'Content-Type': 'application/json' },
+              body_snippet: '{"verified":true,"action_type":"' + pendingStep.action_type + '"}',
+              body_length: 64,
+              body_hash: 'sha256-inv-verified',
+              content_type: 'application/json',
+              response_time_ms: 45,
+            },
+            scope_decision: {
+              is_in_scope: true,
+              target_id: inv.target_id,
+              evaluated_host: 'target.internal',
+              rule_matched: 'STRICT_SCOPE_ALLOWLIST',
+              reason: 'Authorized investigation step probe',
+              evaluated_at: new Date().toISOString(),
+            },
+            redaction_status: {
+              is_redacted: false,
+              redacted_fields: [],
+              sanitized_at: new Date().toISOString(),
+            },
+            sha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+            provenance: {
+              source: 'CONTROLLED_VALIDATION',
+              operation_id: inv.id,
+              target_id: inv.target_id,
+              asset_id: inv.asset_id,
+              captured_at: new Date().toISOString(),
+              initiator: 'InvestigationEngine',
+            },
+          });
+
+          // Check if all steps completed
+          const remainingPending = inv.steps?.some((s: any) => s.status === 'PENDING');
+          if (!remainingPending) {
+            inv.status = 'COMPLETED';
+            inv.falsification_result = 'CONFIRMED_VIOLATION';
+          }
+          inv.updated_at = new Date().toISOString();
+          res.statusCode = 200;
+          return res.end(JSON.stringify(inv));
+        }
+
+        // 62. GET & POST /api/assets/:id/trust-boundaries
+        const tbMatch = url.match(/^\/api\/assets\/([^\/?]+)\/trust-boundaries(\?.*)?$/);
+        if (tbMatch && req.method === 'GET') {
+          const assetId = tbMatch[1];
+          const list = trustBoundariesStore.filter((t) => t.asset_id === assetId);
+          res.statusCode = 200;
+          return res.end(JSON.stringify(list));
+        }
+
+        // 63. GET & POST /api/assets/:id/permission-matrix
+        const pmMatch = url.match(/^\/api\/assets\/([^\/?]+)\/permission-matrix(\?.*)?$/);
+        if (pmMatch) {
+          const assetId = pmMatch[1];
+          if (req.method === 'GET') {
+            const list = permissionMatrixStore.filter((p) => p.asset_id === assetId);
+            res.statusCode = 200;
+            return res.end(JSON.stringify(list));
+          }
+          if (req.method === 'POST') {
+            const body = await readBody();
+            const newEntry = {
+              id: `pm-${Date.now().toString(36)}`,
+              asset_id: assetId,
+              endpoint: body.endpoint || '/api',
+              role: body.role || 'USER',
+              expected_access: body.expected_access || 'ALLOWED',
+              observed_access: body.observed_access || 'ALLOWED',
+              has_anomaly: body.expected_access !== body.observed_access,
+              last_verified: new Date().toISOString(),
+            };
+            permissionMatrixStore.push(newEntry);
+            res.statusCode = 201;
+            return res.end(JSON.stringify(newEntry));
+          }
+        }
+
+        // 64. GET /api/assets/:id/security-controls
+        const scMatch = url.match(/^\/api\/assets\/([^\/?]+)\/security-controls(\?.*)?$/);
+        if (scMatch && req.method === 'GET') {
+          const assetId = scMatch[1];
+          const list = securityControlsStore.filter((s) => s.asset_id === assetId);
+          res.statusCode = 200;
+          return res.end(JSON.stringify(list));
+        }
+
+        // 65. GET & POST /api/auth-contexts
+        const acMatch = url.match(/^\/api\/auth-contexts(\?.*)?$/);
+        if (acMatch) {
+          if (req.method === 'GET') {
+            res.statusCode = 200;
+            return res.end(JSON.stringify(authContextsStore));
+          }
+          if (req.method === 'POST') {
+            const body = await readBody();
+            const newAc = {
+              id: `ac-${Date.now().toString(36)}`,
+              target_id: body.target_id || 'tgt-alpha-001',
+              name: body.name || 'Custom Context',
+              auth_type: body.auth_type || 'NONE',
+              headers: body.headers || {},
+              is_active: true,
+            };
+            authContextsStore.push(newAc);
+            res.statusCode = 201;
+            return res.end(JSON.stringify(newAc));
+          }
+        }
+
+        // 66. POST /api/reasoning/analyze (trigger reasoning cycle)
+        if ((url === '/api/reasoning/analyze' || url === '/api/reasoning/cycle') && req.method === 'POST') {
+          const body = await readBody();
+          const targetId = body.target_id || 'tgt-alpha-001';
+          const run = {
+            id: `run-${Date.now().toString(36)}`,
+            target_id: targetId,
+            engine: 'NexusHunter-ReasoningEngine',
+            engine_version: '7.0.0',
+            input_count: evidenceStore.length + securityContradictionsStore.length,
+            signals_count: reasoningSignalsStore.length,
+            hypotheses_count: hypothesesStore.length,
+            duration_ms: 142,
+            status: 'SUCCESS',
+            created_at: new Date().toISOString(),
+          };
+          res.statusCode = 200;
+          return res.end(JSON.stringify(run));
+        }
+
+        // 67. POST /api/reasoning/ai-assist
+        if (url === '/api/reasoning/ai-assist' && req.method === 'POST') {
+          const body = await readBody();
+          const resPayload = {
+            hypothesis_id: body.hypothesis_id,
+            reasoning_summary: 'Analysis grounded strictly in empirical evidence and falsification criteria.',
+            epistemic_evaluation: 'Observed unauthenticated token issuance deviates from expected OAuth policy. However, per strict epistemic rule, absence of Authorization header validation does not conclusively prove privilege escalation until token scopes are empirically tested downstream.',
+            suggested_falsifiers: [
+              'Submit emitted token to /api/v1/user and record HTTP status code',
+              'Verify JWKS public key signature offline',
+            ],
+            competing_theories: [
+              'Intended guest token issuance with zero elevated permissions',
+              'Internal debugging bypass deployed without WAF header filter',
+            ],
+            confidence_level: 'MODERATE_CONFIDENCE',
+            evaluated_at: new Date().toISOString(),
+          };
+          res.statusCode = 200;
+          return res.end(JSON.stringify(resPayload));
         }
 
 

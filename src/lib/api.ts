@@ -17,6 +17,7 @@ import {
   AssetTag,
   TargetIntelligenceSummary,
   AssetDetail,
+  EvidenceIntegrityResult,
 } from '../types';
 
 export class ApiError extends Error {
@@ -340,6 +341,10 @@ class ApiClient {
 
   async getEvidence(id: string): Promise<any> {
     return this.request(`/api/evidence/${encodeURIComponent(id)}`);
+  }
+
+  async verifyEvidenceIntegrity(id: string): Promise<EvidenceIntegrityResult> {
+    return this.request<EvidenceIntegrityResult>(`/api/evidence/${encodeURIComponent(id)}/integrity`);
   }
 
   async getTargetEvidence(targetId: string): Promise<any> {

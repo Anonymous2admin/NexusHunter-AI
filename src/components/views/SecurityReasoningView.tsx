@@ -149,6 +149,42 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
     }
   };
 
+  const handleUpdateHypothesisStatus = async (hypId: string, nextStatus: any) => {
+    try {
+      setError(null);
+      await api.updateHypothesisStatus(hypId, nextStatus);
+      setSuccessMessage(`Hypothesis transitioned to ${nextStatus}.`);
+      await loadReasoningData(targetId);
+      if (selectedHypothesis && selectedHypothesis.id === hypId) {
+        setSelectedHypothesis((prev) => (prev ? { ...prev, status: nextStatus } : null));
+      }
+    } catch (err: any) {
+      setError(err.message || 'State transition rejected.');
+    }
+  };
+
+  const handleUpdateSignalStatus = async (sigId: string, nextStatus: any) => {
+    try {
+      setError(null);
+      await api.updateSignalStatus(sigId, nextStatus);
+      setSuccessMessage(`Signal transitioned to ${nextStatus}.`);
+      await loadReasoningData(targetId);
+    } catch (err: any) {
+      setError(err.message || 'Signal state transition rejected.');
+    }
+  };
+
+  const handleCancelInvestigation = async (invId: string) => {
+    try {
+      setError(null);
+      await api.cancelInvestigation(invId);
+      setSuccessMessage(`Investigation cancelled safely.`);
+      await loadReasoningData(targetId);
+    } catch (err: any) {
+      setError(err.message || 'Failed to cancel investigation.');
+    }
+  };
+
   const handleExecuteInvestigationStep = async (invId: string) => {
     try {
       const updated = await api.executeInvestigationStep(invId);
@@ -543,6 +579,99 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
                       </div>
                     </div>
 
+                    <div>
+                      <h4 className="text-xs font-semibold text-slate-300 uppercase">State Machine Transition</h4>
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {selectedHypothesis.status === 'HYPOTHESIZED' && (
+                          <>
+                            <button
+                              onClick={() => handleUpdateHypothesisStatus(selectedHypothesis.id, 'INVESTIGATING')}
+                              className="rounded bg-indigo-950 border border-indigo-700/60 px-2 py-1 text-[11px] font-medium text-indigo-300 hover:bg-indigo-900"
+                            >
+                              → INVESTIGATING
+                            </button>
+                            <button
+                              onClick={() => handleUpdateHypothesisStatus(selectedHypothesis.id, 'DISMISSED')}
+                              className="rounded bg-slate-800 border border-slate-700 px-2 py-1 text-[11px] font-medium text-slate-300 hover:bg-slate-700"
+                            >
+                              → DISMISSED
+                            </button>
+                          </>
+                        )}
+                        {selectedHypothesis.status === 'INVESTIGATING' && (
+                          <>
+                            <button
+                              onClick={() => handleUpdateHypothesisStatus(selectedHypothesis.id, 'SUPPORTED')}
+                              className="rounded bg-emerald-950 border border-emerald-700/60 px-2 py-1 text-[11px] font-medium text-emerald-300 hover:bg-emerald-900"
+                            >
+                              → SUPPORTED
+                            </button>
+                            <button
+                              onClick={() => handleUpdateHypothesisStatus(selectedHypothesis.id, 'FALSIFIED')}
+                              className="rounded bg-rose-950 border border-rose-700/60 px-2 py-1 text-[11px] font-medium text-rose-300 hover:bg-rose-900"
+                            >
+                              → FALSIFIED
+                            </button>
+                            <button
+                              onClick={() => handleUpdateHypothesisStatus(selectedHypothesis.id, 'UNKNOWN')}
+                              className="rounded bg-amber-950 border border-amber-700/60 px-2 py-1 text-[11px] font-medium text-amber-300 hover:bg-amber-900"
+                            >
+                              → UNKNOWN
+                            </button>
+                            <button
+                              onClick={() => handleUpdateHypothesisStatus(selectedHypothesis.id, 'DISMISSED')}
+                              className="rounded bg-slate-800 border border-slate-700 px-2 py-1 text-[11px] font-medium text-slate-300 hover:bg-slate-700"
+                            >
+                              → DISMISSED
+                            </button>
+                          </>
+                        )}
+                        {selectedHypothesis.status === 'SUPPORTED' && (
+                          <>
+                            <button
+                              onClick={() => handleUpdateHypothesisStatus(selectedHypothesis.id, 'FALSIFIED')}
+                              className="rounded bg-rose-950 border border-rose-700/60 px-2 py-1 text-[11px] font-medium text-rose-300 hover:bg-rose-900"
+                            >
+                              → FALSIFIED
+                            </button>
+                            <button
+                              onClick={() => handleUpdateHypothesisStatus(selectedHypothesis.id, 'INVESTIGATING')}
+                              className="rounded bg-indigo-950 border border-indigo-700/60 px-2 py-1 text-[11px] font-medium text-indigo-300 hover:bg-indigo-900"
+                            >
+                              → Re-investigate
+                            </button>
+                          </>
+                        )}
+                        {selectedHypothesis.status === 'FALSIFIED' && (
+                          <span className="text-[11px] text-slate-500 font-mono italic">Terminal State (Falsified)</span>
+                        )}
+                        {selectedHypothesis.status === 'UNKNOWN' && (
+                          <>
+                            <button
+                              onClick={() => handleUpdateHypothesisStatus(selectedHypothesis.id, 'INVESTIGATING')}
+                              className="rounded bg-indigo-950 border border-indigo-700/60 px-2 py-1 text-[11px] font-medium text-indigo-300 hover:bg-indigo-900"
+                            >
+                              → Re-investigate
+                            </button>
+                            <button
+                              onClick={() => handleUpdateHypothesisStatus(selectedHypothesis.id, 'DISMISSED')}
+                              className="rounded bg-slate-800 border border-slate-700 px-2 py-1 text-[11px] font-medium text-slate-300 hover:bg-slate-700"
+                            >
+                              → DISMISSED
+                            </button>
+                          </>
+                        )}
+                        {selectedHypothesis.status === 'DISMISSED' && (
+                          <button
+                            onClick={() => handleUpdateHypothesisStatus(selectedHypothesis.id, 'HYPOTHESIZED')}
+                            className="rounded bg-indigo-950 border border-indigo-700/60 px-2 py-1 text-[11px] font-medium text-indigo-300 hover:bg-indigo-900"
+                          >
+                            ↺ Reopen as HYPOTHESIZED
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
                     <div className="border-t border-slate-800 pt-3 flex gap-2">
                       <button
                         onClick={() => handlePlanInvestigation(selectedHypothesis.id)}
@@ -607,12 +736,57 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between text-xs text-slate-500 border-t border-slate-800/60 pt-2">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs text-slate-500 border-t border-slate-800/60 pt-2">
                   <div className="flex items-center gap-3">
                     <span>Endpoint: <span className="font-mono text-slate-400">{sig.endpoint || '/'}</span></span>
                     <span>Evidence Refs: <span className="font-mono text-slate-400">{sig.source_evidence?.length || 0}</span></span>
                   </div>
-                  <span className="font-mono text-[11px] text-slate-400">Status: {sig.status}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[11px] text-slate-400">Status: {sig.status}</span>
+                    {sig.status === 'OPEN' && (
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleUpdateSignalStatus(sig.id, 'CORRELATED')}
+                          className="rounded bg-indigo-950 border border-indigo-700/60 px-1.5 py-0.5 text-[10px] text-indigo-300 hover:bg-indigo-900"
+                        >
+                          Correlate
+                        </button>
+                        <button
+                          onClick={() => handleUpdateSignalStatus(sig.id, 'DISMISSED')}
+                          className="rounded bg-slate-800 border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-300 hover:bg-slate-700"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    )}
+                    {sig.status === 'CORRELATED' && (
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleUpdateSignalStatus(sig.id, 'SUPERSEDED')}
+                          className="rounded bg-purple-950 border border-purple-700/60 px-1.5 py-0.5 text-[10px] text-purple-300 hover:bg-purple-900"
+                        >
+                          Supersede
+                        </button>
+                        <button
+                          onClick={() => handleUpdateSignalStatus(sig.id, 'DISMISSED')}
+                          className="rounded bg-slate-800 border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-300 hover:bg-slate-700"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    )}
+                    {sig.status === 'SUPERSEDED' && (
+                      <span className="text-[10px] text-slate-500 font-mono italic">Terminal</span>
+                    )}
+                    {sig.status === 'DISMISSED' && (
+                      <button
+                        onClick={() => handleUpdateSignalStatus(sig.id, 'OPEN')}
+                        className="rounded bg-indigo-950 border border-indigo-700/60 px-1.5 py-0.5 text-[10px] text-indigo-300 hover:bg-indigo-900"
+                      >
+                        Reopen
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
@@ -658,13 +832,21 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
 
                     <div className="flex items-center gap-2">
                       {inv.status !== 'COMPLETED' && inv.status !== 'CANCELLED' && (
-                        <button
-                          onClick={() => handleExecuteInvestigationStep(inv.id)}
-                          className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-500"
-                        >
-                          <Play className="h-3.5 w-3.5" />
-                          Execute Next Step
-                        </button>
+                        <>
+                          <button
+                            onClick={() => handleCancelInvestigation(inv.id)}
+                            className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={() => handleExecuteInvestigationStep(inv.id)}
+                            className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-500"
+                          >
+                            <Play className="h-3.5 w-3.5" />
+                            Execute Next Step
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>

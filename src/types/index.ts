@@ -639,6 +639,15 @@ export interface Evidence {
   metadata?: Record<string, any>;
 }
 
+export interface EvidenceIntegrityResult {
+  evidence_id: string;
+  original_sha256: string;
+  computed_sha256: string;
+  is_tampered: boolean;
+  verified_at: string;
+  canonical_matches: boolean;
+}
+
 export interface Level1RawDiff {
   status_from: number;
   status_to: number;

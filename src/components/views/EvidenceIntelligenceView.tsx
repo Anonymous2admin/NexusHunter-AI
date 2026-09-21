@@ -36,6 +36,7 @@ import {
   EvidenceTimelineEvent,
   EpistemicObservationState,
   ContradictionStatus,
+  EvidenceIntegrityResult,
 } from '../../types';
 import { api } from '../../lib/api';
 import { MetricCard } from '../MetricCard';
@@ -87,6 +88,22 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
   const [evalEvidenceRef, setEvalEvidenceRef] = useState<string>('');
   const [isEvaluating, setIsEvaluating] = useState<boolean>(false);
   const [evalResultNotice, setEvalResultNotice] = useState<string | null>(null);
+
+  // Cryptographic Integrity Verification State
+  const [verifyingIntegrityId, setVerifyingIntegrityId] = useState<string | null>(null);
+  const [integrityResults, setIntegrityResults] = useState<Record<string, EvidenceIntegrityResult>>({});
+
+  const handleVerifyIntegrity = async (evidenceId: string) => {
+    setVerifyingIntegrityId(evidenceId);
+    try {
+      const res = await api.verifyEvidenceIntegrity(evidenceId);
+      setIntegrityResults((prev) => ({ ...prev, [evidenceId]: res }));
+    } catch (err: any) {
+      console.error('Integrity audit failed:', err);
+    } finally {
+      setVerifyingIntegrityId(null);
+    }
+  };
 
   // Record New Evidence Modal
   const [showRecordModal, setShowRecordModal] = useState(false);
@@ -678,13 +695,57 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
                           )}
 
                           {/* Full SHA-256 Hash & Canonical Representation */}
-                          <div className="rounded-lg border border-slate-800 bg-slate-950 p-3 space-y-2">
-                            <div className="flex items-center justify-between">
-                              <span className="font-semibold text-slate-300">Deterministic SHA-256 Canonical Fingerprint</span>
-                              <span className="text-indigo-400 font-mono text-[11px]">{ev.sha256}</span>
+                          <div className="rounded-lg border border-slate-800 bg-slate-950 p-3 space-y-3">
+                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                              <div>
+                                <span className="font-semibold text-slate-300 block">Deterministic SHA-256 Canonical Fingerprint</span>
+                                <span className="text-indigo-400 font-mono text-[11px] break-all">{ev.sha256}</span>
+                              </div>
+                              <button
+                                onClick={() => handleVerifyIntegrity(ev.id)}
+                                disabled={verifyingIntegrityId === ev.id}
+                                className="inline-flex items-center gap-1.5 self-start sm:self-center rounded-md bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700/60 px-2.5 py-1 text-xs font-medium text-indigo-300 transition-colors disabled:opacity-50"
+                              >
+                                <Shield className={`h-3.5 w-3.5 ${verifyingIntegrityId === ev.id ? 'animate-spin' : ''}`} />
+                                <span>{verifyingIntegrityId === ev.id ? 'Auditing Hash...' : 'Audit Cryptographic Integrity'}</span>
+                              </button>
                             </div>
+
+                            {/* Cryptographic Integrity Result Card */}
+                            {integrityResults[ev.id] && (
+                              <div
+                                className={`rounded-md p-2.5 text-xs border ${
+                                  integrityResults[ev.id].is_tampered
+                                    ? 'bg-rose-950/40 border-rose-800/60 text-rose-300'
+                                    : 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300'
+                                }`}
+                              >
+                                <div className="flex items-start gap-2">
+                                  {integrityResults[ev.id].is_tampered ? (
+                                    <AlertTriangle className="h-4 w-4 shrink-0 text-rose-400 mt-0.5" />
+                                  ) : (
+                                    <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400 mt-0.5" />
+                                  )}
+                                  <div className="space-y-1">
+                                    <div className="font-semibold">
+                                      {integrityResults[ev.id].is_tampered
+                                        ? 'TAMPERING DETECTED: Computed hash does not match original stored record!'
+                                        : 'Cryptographic Integrity Confirmed: Canonical SHA-256 matches stored record.'}
+                                    </div>
+                                    <div className="font-mono text-[11px] text-slate-400">
+                                      <div>Stored: {integrityResults[ev.id].original_sha256}</div>
+                                      <div>Computed: {integrityResults[ev.id].computed_sha256}</div>
+                                      <div className="text-[10px] text-slate-500 mt-0.5">
+                                        Audited at {new Date(integrityResults[ev.id].verified_at).toLocaleTimeString()}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
                             {ev.canonical_representation && (
-                              <details className="text-slate-400">
+                              <details className="text-slate-400 pt-1 border-t border-slate-800/60">
                                 <summary className="cursor-pointer hover:text-slate-200 text-xs text-indigo-400">View Canonical JSON Payload</summary>
                                 <pre className="mt-2 overflow-x-auto rounded bg-slate-900 p-2 text-slate-300 font-mono text-[10px]">
                                   {ev.canonical_representation}
