@@ -67,6 +67,15 @@ type MemoryStorage struct {
 	permissionMatrix     map[string][]*models.PermissionMatrixEntry  // key: targetID
 	securityControls     map[string][]*models.SecurityControlRecord  // key: targetID
 	reasoningRuns        map[string]*models.ReasoningRun             // key: id
+
+	// Phase 8 Scope, JS Intel, Cloud References, WAF & AI Hunting Planner
+	scopeImports         map[string]*models.ScopeImportReview        // key: id
+	jsAssets             map[string]*models.JSAsset                  // key: id
+	jsReferences         map[string][]*models.JSReference            // key: targetID
+	jsSecrets            map[string][]*models.JSSecretIndicator      // key: targetID
+	cloudReferences      map[string][]*models.CloudReference         // key: targetID
+	wafObservations      map[string]*models.WAFObservation           // key: targetID:assetID
+	investigationPlans   map[string]*models.InvestigationPlan        // key: id
 }
 
 // NewMemoryStorage instantiates thread-safe in-memory stores.
@@ -115,6 +124,14 @@ func NewMemoryStorage() *MemoryStorage {
 		permissionMatrix:     make(map[string][]*models.PermissionMatrixEntry),
 		securityControls:     make(map[string][]*models.SecurityControlRecord),
 		reasoningRuns:        make(map[string]*models.ReasoningRun),
+
+		scopeImports:         make(map[string]*models.ScopeImportReview),
+		jsAssets:             make(map[string]*models.JSAsset),
+		jsReferences:         make(map[string][]*models.JSReference),
+		jsSecrets:            make(map[string][]*models.JSSecretIndicator),
+		cloudReferences:      make(map[string][]*models.CloudReference),
+		wafObservations:      make(map[string]*models.WAFObservation),
+		investigationPlans:   make(map[string]*models.InvestigationPlan),
 	}
 }
 
@@ -2098,6 +2115,316 @@ func (m *MemoryStorage) copyRequirements(hypoID string) []models.EvidenceRequire
 	return res
 }
 
+// ==========================================
+// Phase 8: Scope Import Repository
+// ==========================================
 
+func (m *MemoryStorage) SaveImportReview(ctx context.Context, review *models.ScopeImportReview) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := *review
+	m.scopeImports[review.ID] = &cp
+	return nil
+}
 
+func (m *MemoryStorage) GetImportReview(ctx context.Context, id string) (*models.ScopeImportReview, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	rev, exists := m.scopeImports[id]
+	if !exists {
+		return nil, ErrNotFound
+	}
+	cp := *rev
+	return &cp, nil
+}
 
+func (m *MemoryStorage) ListImportReviews(ctx context.Context) ([]*models.ScopeImportReview, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var res []*models.ScopeImportReview
+	for _, rev := range m.scopeImports {
+		cp := *rev
+		res = append(res, &cp)
+	}
+	sort.Slice(res, func(i, j int) bool {
+		return res[i].CreatedAt.After(res[j].CreatedAt)
+	})
+	return res, nil
+}
+
+func (m *MemoryStorage) ConfirmImportReview(ctx context.Context, id string, selectedRootDomain string, targetID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rev, exists := m.scopeImports[id]
+	if !exists {
+		return ErrNotFound
+	}
+	now := time.Now().UTC()
+	rev.Status = "CONFIRMED"
+	rev.SelectedRootDomain = selectedRootDomain
+	rev.TargetID = targetID
+	rev.ConfirmedAt = &now
+	return nil
+}
+
+// ==========================================
+// Phase 8: JavaScript Intelligence Repository
+// ==========================================
+
+func (m *MemoryStorage) SaveJSAsset(ctx context.Context, asset *models.JSAsset) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := *asset
+	m.jsAssets[asset.ID] = &cp
+	return nil
+}
+
+func (m *MemoryStorage) GetJSAsset(ctx context.Context, id string) (*models.JSAsset, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	asset, exists := m.jsAssets[id]
+	if !exists {
+		return nil, ErrNotFound
+	}
+	cp := *asset
+	return &cp, nil
+}
+
+func (m *MemoryStorage) ListJSAssets(ctx context.Context, targetID, assetID string) ([]*models.JSAsset, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var res []*models.JSAsset
+	for _, a := range m.jsAssets {
+		if a.TargetID == targetID {
+			if assetID == "" || a.AssetID == assetID {
+				cp := *a
+				res = append(res, &cp)
+			}
+		}
+	}
+	sort.Slice(res, func(i, j int) bool {
+		return res[i].DiscoveredAt.After(res[j].DiscoveredAt)
+	})
+	return res, nil
+}
+
+func (m *MemoryStorage) SaveJSReference(ctx context.Context, ref *models.JSReference) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := *ref
+	m.jsReferences[ref.TargetID] = append(m.jsReferences[ref.TargetID], &cp)
+	return nil
+}
+
+func (m *MemoryStorage) ListJSReferences(ctx context.Context, targetID, jsAssetID string) ([]*models.JSReference, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var res []*models.JSReference
+	for _, ref := range m.jsReferences[targetID] {
+		if jsAssetID == "" || ref.JSAssetID == jsAssetID {
+			cp := *ref
+			res = append(res, &cp)
+		}
+	}
+	sort.Slice(res, func(i, j int) bool {
+		return res[i].CreatedAt.After(res[j].CreatedAt)
+	})
+	return res, nil
+}
+
+func (m *MemoryStorage) SaveSecretIndicator(ctx context.Context, sec *models.JSSecretIndicator) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := *sec
+	m.jsSecrets[sec.TargetID] = append(m.jsSecrets[sec.TargetID], &cp)
+	return nil
+}
+
+func (m *MemoryStorage) ListSecretIndicators(ctx context.Context, targetID, assetID string) ([]*models.JSSecretIndicator, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var res []*models.JSSecretIndicator
+	for _, sec := range m.jsSecrets[targetID] {
+		if assetID == "" || sec.AssetID == assetID {
+			cp := *sec
+			res = append(res, &cp)
+		}
+	}
+	sort.Slice(res, func(i, j int) bool {
+		return res[i].CreatedAt.After(res[j].CreatedAt)
+	})
+	return res, nil
+}
+
+// ==========================================
+// Phase 8: Cloud Reference Intelligence Repository
+// ==========================================
+
+func (m *MemoryStorage) SaveCloudReference(ctx context.Context, ref *models.CloudReference) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := *ref
+	m.cloudReferences[ref.TargetID] = append(m.cloudReferences[ref.TargetID], &cp)
+	return nil
+}
+
+func (m *MemoryStorage) GetCloudReference(ctx context.Context, id string) (*models.CloudReference, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, refs := range m.cloudReferences {
+		for _, r := range refs {
+			if r.ID == id {
+				cp := *r
+				return &cp, nil
+			}
+		}
+	}
+	return nil, ErrNotFound
+}
+
+func (m *MemoryStorage) ListCloudReferences(ctx context.Context, targetID, assetID string) ([]*models.CloudReference, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var res []*models.CloudReference
+	for _, ref := range m.cloudReferences[targetID] {
+		if assetID == "" || ref.AssetID == assetID {
+			cp := *ref
+			res = append(res, &cp)
+		}
+	}
+	sort.Slice(res, func(i, j int) bool {
+		return res[i].CreatedAt.After(res[j].CreatedAt)
+	})
+	return res, nil
+}
+
+func (m *MemoryStorage) UpdateCloudValidation(ctx context.Context, id string, status string, statusCode int, publicAccessible bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, refs := range m.cloudReferences {
+		for _, r := range refs {
+			if r.ID == id {
+				r.ValidationStatus = status
+				r.StatusCode = statusCode
+				r.PublicAccessible = publicAccessible
+				return nil
+			}
+		}
+	}
+	return ErrNotFound
+}
+
+// ==========================================
+// Phase 8: WAF Intelligence Repository
+// ==========================================
+
+func (m *MemoryStorage) SaveWAFObservation(ctx context.Context, obs *models.WAFObservation) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := fmt.Sprintf("%s:%s", obs.TargetID, obs.AssetID)
+	cp := *obs
+	m.wafObservations[key] = &cp
+	return nil
+}
+
+func (m *MemoryStorage) GetWAFObservation(ctx context.Context, targetID, assetID string) (*models.WAFObservation, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	key := fmt.Sprintf("%s:%s", targetID, assetID)
+	obs, exists := m.wafObservations[key]
+	if !exists {
+		return nil, ErrNotFound
+	}
+	cp := *obs
+	return &cp, nil
+}
+
+func (m *MemoryStorage) ListWAFObservations(ctx context.Context, targetID string) ([]*models.WAFObservation, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var res []*models.WAFObservation
+	for _, obs := range m.wafObservations {
+		if obs.TargetID == targetID {
+			cp := *obs
+			res = append(res, &cp)
+		}
+	}
+	sort.Slice(res, func(i, j int) bool {
+		return res[i].CreatedAt.After(res[j].CreatedAt)
+	})
+	return res, nil
+}
+
+// ==========================================
+// Phase 8: Hunting Planner Repository
+// ==========================================
+
+func (m *MemoryStorage) SaveInvestigationPlan(ctx context.Context, plan *models.InvestigationPlan) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := *plan
+	m.investigationPlans[plan.ID] = &cp
+	return nil
+}
+
+func (m *MemoryStorage) GetInvestigationPlan(ctx context.Context, id string) (*models.InvestigationPlan, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	p, exists := m.investigationPlans[id]
+	if !exists {
+		return nil, ErrNotFound
+	}
+	cp := *p
+	return &cp, nil
+}
+
+func (m *MemoryStorage) ListInvestigationPlans(ctx context.Context, targetID, assetID string) ([]*models.InvestigationPlan, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var res []*models.InvestigationPlan
+	for _, p := range m.investigationPlans {
+		if p.TargetID == targetID {
+			if assetID == "" || p.AssetID == assetID {
+				cp := *p
+				res = append(res, &cp)
+			}
+		}
+	}
+	sort.Slice(res, func(i, j int) bool {
+		return res[i].CreatedAt.After(res[j].CreatedAt)
+	})
+	return res, nil
+}
+
+func (m *MemoryStorage) ApprovePlanStep(ctx context.Context, planID string, stepNumber int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	plan, exists := m.investigationPlans[planID]
+	if !exists {
+		return ErrNotFound
+	}
+	for i := range plan.Steps {
+		if plan.Steps[i].StepNumber == stepNumber {
+			now := time.Now().UTC()
+			plan.Steps[i].ApprovedByHuman = true
+			plan.Steps[i].ApprovedAt = &now
+			plan.Steps[i].Status = "APPROVED"
+			plan.Status = "APPROVED"
+			plan.UpdatedAt = now
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
+func (m *MemoryStorage) UpdatePlanStatus(ctx context.Context, planID string, status string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	plan, exists := m.investigationPlans[planID]
+	if !exists {
+		return ErrNotFound
+	}
+	plan.Status = status
+	plan.UpdatedAt = time.Now().UTC()
+	return nil
+}

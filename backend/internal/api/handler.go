@@ -10,15 +10,19 @@ import (
 	"time"
 
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/ai"
+	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/cloudintel"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/config"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/events"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/intel"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/jobs"
+	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/jsintel"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/models"
+	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/planner"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/reasoning"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/recon"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/scope"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/storage"
+	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/waf"
 )
 
 // Handler houses all HTTP endpoints for the NexusHunter-AI API.
@@ -45,7 +49,20 @@ type Handler struct {
 	}
 	reasoningRepo storage.ReasoningRepository
 	reasoningEng  *reasoning.Engine
+
+	// Phase 8 Fields
+	p8ScopeImportRepo storage.ScopeImportRepository
+	p8ScopeSanitizer  scope.ImportSanitizer
+	p8JSRepo          storage.JSIntelligenceRepository
+	p8JSIntel         jsintel.Service
+	p8CloudRepo       storage.CloudIntelligenceRepository
+	p8CloudIntel      cloudintel.Service
+	p8WAFRepo         storage.WAFIntelligenceRepository
+	p8WAFDetector     waf.Detector
+	p8PlannerRepo     storage.HuntingPlannerRepository
+	p8PlannerSvc      planner.Service
 }
+
 
 // NewHandler initializes API handlers with required dependencies.
 func NewHandler(

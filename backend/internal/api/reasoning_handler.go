@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/models"
@@ -366,16 +365,14 @@ func (h *Handler) ExecuteInvestigationStep(w http.ResponseWriter, r *http.Reques
 					Reason:      "Authorized investigation baseline probe",
 					EvaluatedAt: now,
 				},
-				EpistemicStatus: models.EpistemicObserved,
 				Request: &models.HTTPRequestContext{
 					Method: "GET",
 					URL:    fmt.Sprintf("https://target-%s.internal/baseline", inv.TargetID[:min(8, len(inv.TargetID))]),
 				},
 				Response: &models.HTTPResponseContext{
 					StatusCode: 200,
-					StatusText: "OK",
 					BodyHash:   "sha256-baseline-verified",
-					Size:       512,
+					BodyLength: 512,
 				},
 			}
 			recorded, err := h.evidenceEng.RecordEvidence(r.Context(), baselineEv)
@@ -414,8 +411,8 @@ func (h *Handler) ExecuteInvestigationStep(w http.ResponseWriter, r *http.Reques
 					Reason:      "Safe differential observation comparison",
 					EvaluatedAt: now,
 				},
-				EpistemicStatus: models.EpistemicObserved,
 			}
+
 			recorded, err := h.evidenceEng.RecordEvidence(r.Context(), diffEv)
 			if err == nil && recorded != nil {
 				step.ResultEvidenceID = recorded.ID

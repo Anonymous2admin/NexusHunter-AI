@@ -127,6 +127,31 @@ func NewRouter(h *Handler, logger *slog.Logger) http.Handler {
 	mux.HandleFunc("POST /api/reasoning/analyze", h.TriggerReasoningCycle)
 	mux.HandleFunc("POST /api/reasoning/ai-assist", h.AIAssistedReasoning)
 
+	// Phase 8: Scope Intelligence & Sanitization
+	mux.HandleFunc("POST /api/targets/import-scope", h.ImportScope)
+	mux.HandleFunc("GET /api/scope-imports", h.ListScopeImports)
+	mux.HandleFunc("GET /api/scope-imports/{id}", h.GetScopeImport)
+	mux.HandleFunc("POST /api/scope-imports/{id}/confirm", h.ConfirmScopeImport)
+
+	// Phase 8: JavaScript Asset Intelligence & Structural Extraction
+	mux.HandleFunc("GET /api/targets/{id}/js-assets", h.ListTargetJSAssets)
+	mux.HandleFunc("GET /api/targets/{id}/js-references", h.ListTargetJSReferences)
+	mux.HandleFunc("GET /api/targets/{id}/js-secrets", h.ListTargetJSSecrets)
+	mux.HandleFunc("POST /api/targets/{id}/js-intel/analyze", h.TriggerJSAnalysis)
+
+	// Phase 8: Cloud Reference Intelligence
+	mux.HandleFunc("GET /api/targets/{id}/cloud-references", h.ListTargetCloudReferences)
+	mux.HandleFunc("POST /api/targets/{id}/cloud-references/validate", h.ValidateCloudReference)
+
+	// Phase 8: WAF-Aware Collection & Telemetry
+	mux.HandleFunc("GET /api/targets/{id}/waf-observations", h.ListTargetWAFObservations)
+
+	// Phase 8: AI Hunting Planner & Human Validation Checklist
+	mux.HandleFunc("POST /api/targets/{id}/investigation-plans/generate", h.GenerateHuntingPlan)
+	mux.HandleFunc("GET /api/targets/{id}/investigation-plans", h.ListInvestigationPlans)
+	mux.HandleFunc("GET /api/investigation-plans/{id}", h.GetInvestigationPlan)
+	mux.HandleFunc("POST /api/investigation-plans/{id}/approve-step", h.ApproveInvestigationStep)
+
 	// Event Telemetry
 	mux.HandleFunc("GET /api/events", h.ListEvents)
 

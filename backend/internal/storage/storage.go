@@ -210,6 +210,45 @@ type ReasoningRepository interface {
 	RecordReasoningRun(ctx context.Context, run *models.ReasoningRun) error
 }
 
+// ScopeImportRepository manages persistence of imported scope files, normalizations, and review workflows.
+type ScopeImportRepository interface {
+	SaveImportReview(ctx context.Context, review *models.ScopeImportReview) error
+	GetImportReview(ctx context.Context, id string) (*models.ScopeImportReview, error)
+	ListImportReviews(ctx context.Context) ([]*models.ScopeImportReview, error)
+	ConfirmImportReview(ctx context.Context, id string, selectedRootDomain string, targetID string) error
+}
 
+// JSIntelligenceRepository manages JavaScript assets, references, and redacted secret indicators.
+type JSIntelligenceRepository interface {
+	SaveJSAsset(ctx context.Context, asset *models.JSAsset) error
+	GetJSAsset(ctx context.Context, id string) (*models.JSAsset, error)
+	ListJSAssets(ctx context.Context, targetID, assetID string) ([]*models.JSAsset, error)
+	SaveJSReference(ctx context.Context, ref *models.JSReference) error
+	ListJSReferences(ctx context.Context, targetID, jsAssetID string) ([]*models.JSReference, error)
+	SaveSecretIndicator(ctx context.Context, sec *models.JSSecretIndicator) error
+	ListSecretIndicators(ctx context.Context, targetID, assetID string) ([]*models.JSSecretIndicator, error)
+}
 
+// CloudIntelligenceRepository manages observed cloud resources across assets.
+type CloudIntelligenceRepository interface {
+	SaveCloudReference(ctx context.Context, ref *models.CloudReference) error
+	GetCloudReference(ctx context.Context, id string) (*models.CloudReference, error)
+	ListCloudReferences(ctx context.Context, targetID, assetID string) ([]*models.CloudReference, error)
+	UpdateCloudValidation(ctx context.Context, id string, status string, statusCode int, publicAccessible bool) error
+}
 
+// WAFIntelligenceRepository manages WAF observations and throttling metrics.
+type WAFIntelligenceRepository interface {
+	SaveWAFObservation(ctx context.Context, obs *models.WAFObservation) error
+	GetWAFObservation(ctx context.Context, targetID, assetID string) (*models.WAFObservation, error)
+	ListWAFObservations(ctx context.Context, targetID string) ([]*models.WAFObservation, error)
+}
+
+// HuntingPlannerRepository manages generated investigation plans and human validation steps.
+type HuntingPlannerRepository interface {
+	SaveInvestigationPlan(ctx context.Context, plan *models.InvestigationPlan) error
+	GetInvestigationPlan(ctx context.Context, id string) (*models.InvestigationPlan, error)
+	ListInvestigationPlans(ctx context.Context, targetID, assetID string) ([]*models.InvestigationPlan, error)
+	ApprovePlanStep(ctx context.Context, planID string, stepNumber int) error
+	UpdatePlanStatus(ctx context.Context, planID string, status string) error
+}

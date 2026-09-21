@@ -1,0 +1,9 @@
+-- NexusHunter-AI: Phase 8 Schema Rollback
+DROP TABLE IF EXISTS investigation_plan_steps CASCADE;
+DROP TABLE IF EXISTS investigation_plans CASCADE;
+DROP TABLE IF EXISTS waf_observations CASCADE;
+DROP TABLE IF EXISTS cloud_references CASCADE;
+DROP TABLE IF EXISTS js_secret_indicators CASCADE;
+DROP TABLE IF EXISTS js_references CASCADE;
+DROP TABLE IF EXISTS js_assets CASCADE;
+DROP TABLE IF EXISTS scope_imports CASCADE;

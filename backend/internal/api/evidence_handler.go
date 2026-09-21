@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -30,8 +31,10 @@ func (h *Handler) RecordEvidence(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1. Server-side validation: TargetID must exist
+	var target *models.Target
 	if h.storage != nil {
-		target, err := h.storage.Get(r.Context(), req.TargetID)
+		var err error
+		target, err = h.storage.GetByID(r.Context(), req.TargetID)
 		if err != nil || target == nil {
 			Error(w, http.StatusNotFound, "TARGET_NOT_FOUND", "specified target does not exist", "")
 			return
@@ -39,22 +42,29 @@ func (h *Handler) RecordEvidence(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. Server-side validation: AssetID must belong to TargetID
-	if req.AssetID != "" && h.reconRepo != nil {
-		asset, err := h.reconRepo.GetAsset(r.Context(), req.AssetID)
-		if err != nil || asset == nil || asset.TargetID != req.TargetID {
+	if req.AssetID != "" && h.intelRepo != nil {
+		detail, err := h.intelRepo.GetAssetDetail(r.Context(), req.TargetID, req.AssetID)
+		if err != nil || detail == nil || detail.Asset == nil || detail.Asset.TargetID != req.TargetID {
 			Error(w, http.StatusConflict, "SECURITY_CONTEXT_MISMATCH", "asset does not belong to target", "")
 			return
 		}
 	}
 
+
 	// 3. Server-side validation: SSRF and scope validation
-	if req.Request != nil && req.Request.URL != "" && h.scopeSvc != nil {
-		inScope, err := h.scopeSvc.IsURLInScope(r.Context(), req.TargetID, req.Request.URL)
+	if req.Request != nil && req.Request.URL != "" && h.scopeSvc != nil && target != nil {
+		u, err := url.Parse(req.Request.URL)
+		if err != nil {
+			Error(w, http.StatusBadRequest, "MALFORMED_URL", "malformed request URL", err.Error())
+			return
+		}
+		inScope, err := h.scopeSvc.IsInScope(target, u.Hostname(), req.Request.URL)
 		if err != nil || !inScope {
 			Error(w, http.StatusForbidden, "SCOPE_VIOLATION", "evidence request URL violates target scope or SSRF restrictions", "")
 			return
 		}
 	}
+
 
 	recorded, err := h.evidenceEng.RecordEvidence(r.Context(), &req)
 	if err != nil {

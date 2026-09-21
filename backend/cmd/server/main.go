@@ -14,15 +14,20 @@ import (
 
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/ai"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/api"
+	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/cloudintel"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/config"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/events"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/evidence"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/intel"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/jobs"
+	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/jsintel"
+	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/planner"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/reasoning"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/recon"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/scope"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/storage"
+	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/waf"
+
 
 	_ "github.com/lib/pq"
 )
@@ -62,13 +67,18 @@ func main() {
 
 	// 3. Initialize Storage Layer (Postgres or In-Memory)
 	var (
-		targetStore    storage.TargetRepository
-		reconStore     storage.ReconRepository
-		intelStore     storage.AssetIntelligenceRepository
-		analysisStore  storage.AIAnalysisRepository
-		secStore       storage.SecurityIntelligenceRepository
-		evidenceStore  storage.EvidenceRepository
-		reasoningStore storage.ReasoningRepository
+		targetStore      storage.TargetRepository
+		reconStore       storage.ReconRepository
+		intelStore       storage.AssetIntelligenceRepository
+		analysisStore    storage.AIAnalysisRepository
+		secStore         storage.SecurityIntelligenceRepository
+		evidenceStore    storage.EvidenceRepository
+		reasoningStore   storage.ReasoningRepository
+		scopeImportStore storage.ScopeImportRepository
+		jsStore          storage.JSIntelligenceRepository
+		cloudStore       storage.CloudIntelligenceRepository
+		wafStore         storage.WAFIntelligenceRepository
+		plannerStore     storage.HuntingPlannerRepository
 	)
 	if cfg.DatabaseURL != "" {
 		logger.Info("Connecting to PostgreSQL database", slog.String("db_url", maskDatabaseURL(cfg.DatabaseURL)))
@@ -94,6 +104,11 @@ func main() {
 			secStore = memStorage
 			evidenceStore = memStorage
 			reasoningStore = memStorage
+			scopeImportStore = memStorage
+			jsStore = memStorage
+			cloudStore = memStorage
+			wafStore = memStorage
+			plannerStore = memStorage
 		} else {
 			pingCancel()
 			defer db.Close()
@@ -105,6 +120,13 @@ func main() {
 			secStore = pgStorage
 			evidenceStore = pgStorage
 			reasoningStore = pgStorage
+
+			pg8Storage := storage.NewPostgresPhase8Storage(db)
+			scopeImportStore = pg8Storage
+			jsStore = pg8Storage
+			cloudStore = pg8Storage
+			wafStore = pg8Storage
+			plannerStore = pg8Storage
 		}
 	} else {
 		logger.Info("No DATABASE_URL configured; initializing high-speed in-memory store for local development")
@@ -116,6 +138,11 @@ func main() {
 		secStore = memStorage
 		evidenceStore = memStorage
 		reasoningStore = memStorage
+		scopeImportStore = memStorage
+		jsStore = memStorage
+		cloudStore = memStorage
+		wafStore = memStorage
+		plannerStore = memStorage
 	}
 
 	// 4. Initialize Core Domain Services & Recon Engine
@@ -161,12 +188,32 @@ func main() {
 	// Initialize Phase 7 Security Reasoning & Investigation Engine
 	reasoningEngine := reasoning.NewEngine(reasoningStore, evidenceStore, targetStore, reconStore)
 
+	// Initialize Phase 8 Intelligence (Scope, JS, Cloud, WAF, Planner)
+	scopeSanitizer := scope.NewSanitizer()
+	jsIntelSvc := jsintel.NewService(scopeValidator, evidenceStore)
+	cloudIntelSvc := cloudintel.NewService(nil, scopeValidator, evidenceStore)
+	wafDetector := waf.NewDetector()
+	plannerSvc := planner.NewService(scopeValidator)
+
 	// 5. Setup HTTP Router & Handler
 	handler := api.NewHandler(cfg, targetStore, scopeValidator, jobManager, eventBus, reconEngine, reconStore, intelStore, analysisStore, aiService)
 	handler.SetSecurityIntelligence(secStore, secEngine)
 	handler.SetEvidenceIntelligence(evidenceStore, evidenceEngine)
 	handler.SetReasoningIntelligence(reasoningStore, reasoningEngine)
+	handler.SetPhase8Intelligence(api.Phase8Dependencies{
+		ScopeImportRepo: scopeImportStore,
+		ScopeSanitizer:  scopeSanitizer,
+		JSRepo:          jsStore,
+		JSIntel:         jsIntelSvc,
+		CloudRepo:       cloudStore,
+		CloudIntel:      cloudIntelSvc,
+		WAFRepo:         wafStore,
+		WAFDetector:     wafDetector,
+		PlannerRepo:     plannerStore,
+		PlannerSvc:      plannerSvc,
+	})
 	router := api.NewRouter(handler, logger)
+
 
 	serverAddr := fmt.Sprintf("0.0.0.0:%d", cfg.HTTPPort)
 	srv := &http.Server{
