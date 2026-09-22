@@ -1614,6 +1614,7 @@ function nexusApiPlugin(): Plugin {
             JSON.stringify({
               status: 'ok',
               service: 'nexushunter-api',
+              mode: 'DEMO_FALLBACK',
               time: new Date().toISOString(),
             })
           );

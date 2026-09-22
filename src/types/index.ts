@@ -46,6 +46,7 @@ export interface SystemEvent {
 export interface HealthResponse {
   status: string;
   service: string;
+  mode?: 'LIVE' | 'DEMO_FALLBACK' | 'OFFLINE';
   time?: string;
 }
 

@@ -75,7 +75,7 @@ func NewService(scopeSvc scope.ScopeService, limits JSFetchLimits) Service {
 // Regular expressions for script tags and source map discovery.
 var (
 	scriptSrcRegex = regexp.MustCompile(`(?i)<script[^>]+src\s*=\s*["']([^"'>\s]+)["']`)
-	sourceMapRegex = regexp.MustCompile(`(?i)//[#@]\s*sourceMappingURL\s*=\s*(\S+)`)
+	sourceMapRegex = regexp.MustCompile(`(?i)(?:\/\/[#@] ?sourceMappingURL=([^\s'"]+))|(?:\/\*+[#@] ?sourceMappingURL=([^\s'"]+)\s*\*+\/)`)
 )
 
 // DiscoverScriptsFromHTML extracts JavaScript references from authorized HTML responses.

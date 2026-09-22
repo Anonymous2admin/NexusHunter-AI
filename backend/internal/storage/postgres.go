@@ -24,8 +24,12 @@ func NewPostgresStorage(db *sql.DB) *PostgresStorage {
 // Create inserts a new authorized target into PostgreSQL.
 func (p *PostgresStorage) Create(ctx context.Context, target *models.Target) error {
 	query := `
-		INSERT INTO targets (id, name, root_domain, allowed_domains, allowed_url_patterns, excluded_patterns, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO targets (
+			id, name, root_domain, allowed_domains, allowed_url_patterns, excluded_patterns, status,
+			scope_import_id, canonical_scope_hash, confirmation_timestamp,
+			created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`
 	_, err := p.db.ExecContext(ctx, query,
 		target.ID,
@@ -35,6 +39,9 @@ func (p *PostgresStorage) Create(ctx context.Context, target *models.Target) err
 		strings.Join(target.AllowedURLPatterns, ","),
 		strings.Join(target.ExcludedPatterns, ","),
 		string(target.Status),
+		target.ScopeImportID,
+		target.CanonicalScopeHash,
+		target.ConfirmationTimestamp,
 		target.CreatedAt,
 		target.UpdatedAt,
 	)
@@ -47,7 +54,9 @@ func (p *PostgresStorage) Create(ctx context.Context, target *models.Target) err
 // GetByID fetches a target by its ID.
 func (p *PostgresStorage) GetByID(ctx context.Context, id string) (*models.Target, error) {
 	query := `
-		SELECT id, name, root_domain, allowed_domains, allowed_url_patterns, excluded_patterns, status, created_at, updated_at
+		SELECT id, name, root_domain, allowed_domains, allowed_url_patterns, excluded_patterns, status,
+		       COALESCE(scope_import_id, ''), COALESCE(canonical_scope_hash, ''), confirmation_timestamp,
+		       created_at, updated_at
 		FROM targets WHERE id = $1
 	`
 	row := p.db.QueryRowContext(ctx, query, id)
@@ -55,7 +64,11 @@ func (p *PostgresStorage) GetByID(ctx context.Context, id string) (*models.Targe
 	var t models.Target
 	var allowedDomainsStr, allowedURLsStr, excludedStr, statusStr string
 
-	err := row.Scan(&t.ID, &t.Name, &t.RootDomain, &allowedDomainsStr, &allowedURLsStr, &excludedStr, &statusStr, &t.CreatedAt, &t.UpdatedAt)
+	err := row.Scan(
+		&t.ID, &t.Name, &t.RootDomain, &allowedDomainsStr, &allowedURLsStr, &excludedStr, &statusStr,
+		&t.ScopeImportID, &t.CanonicalScopeHash, &t.ConfirmationTimestamp,
+		&t.CreatedAt, &t.UpdatedAt,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	} else if err != nil {
@@ -73,7 +86,9 @@ func (p *PostgresStorage) GetByID(ctx context.Context, id string) (*models.Targe
 // List returns all configured targets.
 func (p *PostgresStorage) List(ctx context.Context) ([]*models.Target, error) {
 	query := `
-		SELECT id, name, root_domain, allowed_domains, allowed_url_patterns, excluded_patterns, status, created_at, updated_at
+		SELECT id, name, root_domain, allowed_domains, allowed_url_patterns, excluded_patterns, status,
+		       COALESCE(scope_import_id, ''), COALESCE(canonical_scope_hash, ''), confirmation_timestamp,
+		       created_at, updated_at
 		FROM targets ORDER BY created_at DESC
 	`
 	rows, err := p.db.QueryContext(ctx, query)
@@ -87,7 +102,11 @@ func (p *PostgresStorage) List(ctx context.Context) ([]*models.Target, error) {
 		var t models.Target
 		var allowedDomainsStr, allowedURLsStr, excludedStr, statusStr string
 
-		if err := rows.Scan(&t.ID, &t.Name, &t.RootDomain, &allowedDomainsStr, &allowedURLsStr, &excludedStr, &statusStr, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		if err := rows.Scan(
+			&t.ID, &t.Name, &t.RootDomain, &allowedDomainsStr, &allowedURLsStr, &excludedStr, &statusStr,
+			&t.ScopeImportID, &t.CanonicalScopeHash, &t.ConfirmationTimestamp,
+			&t.CreatedAt, &t.UpdatedAt,
+		); err != nil {
 			return nil, err
 		}
 		t.Status = models.TargetStatus(statusStr)

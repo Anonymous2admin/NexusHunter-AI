@@ -17,9 +17,17 @@ CREATE TABLE IF NOT EXISTS scope_imports (
     root_domains JSONB NOT NULL DEFAULT '[]',
     normalizations JSONB NOT NULL DEFAULT '[]',
     canonical_scope JSONB NOT NULL DEFAULT '{}',
+    original_file_sha256 VARCHAR(64),
+    canonical_scope_sha256 VARCHAR(64),
+    normalization_manifest_sha256 VARCHAR(64),
+    selection_reason TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     confirmed_at TIMESTAMPTZ
 );
+
+ALTER TABLE targets ADD COLUMN IF NOT EXISTS scope_import_id VARCHAR(128);
+ALTER TABLE targets ADD COLUMN IF NOT EXISTS canonical_scope_hash VARCHAR(64);
+ALTER TABLE targets ADD COLUMN IF NOT EXISTS confirmation_timestamp TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS idx_scope_imports_status ON scope_imports(status);
 CREATE INDEX IF NOT EXISTS idx_scope_imports_target ON scope_imports(target_id);

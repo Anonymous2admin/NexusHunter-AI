@@ -43,14 +43,33 @@ export const Topbar: React.FC<TopbarProps> = ({
       </div>
 
       <div className="flex items-center gap-3 font-mono text-xs">
-        {/* Health status pill */}
-        <div className="hidden sm:flex items-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 py-1 text-slate-300">
+        {/* Health status pill with explicit LIVE / DEMO / OFFLINE differentiation */}
+        <div
+          id="topbar-connection-indicator"
+          className={`hidden sm:flex items-center gap-2 rounded-full border px-3 py-1 ${
+            health?.mode === 'LIVE'
+              ? 'border-emerald-800/80 bg-emerald-950/40 text-emerald-300'
+              : health?.mode === 'DEMO_FALLBACK'
+              ? 'border-amber-800/80 bg-amber-950/40 text-amber-300'
+              : 'border-rose-800/80 bg-rose-950/40 text-rose-300'
+          }`}
+        >
           <span
             className={`h-2 w-2 rounded-full ${
-              health?.status === 'ok' ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'
+              health?.mode === 'LIVE'
+                ? 'bg-emerald-400 animate-pulse'
+                : health?.mode === 'DEMO_FALLBACK'
+                ? 'bg-amber-400'
+                : 'bg-rose-400'
             }`}
           />
-          <span className="text-[11px]">API: {health?.status === 'ok' ? 'HEALTHY' : 'CONNECTING'}</span>
+          <span className="text-[11px] font-medium tracking-wide">
+            {health?.mode === 'LIVE'
+              ? 'LIVE ENGINE'
+              : health?.mode === 'DEMO_FALLBACK'
+              ? 'DEMO (SYNTHETIC FALLBACK)'
+              : 'OFFLINE'}
+          </span>
         </div>
 
         {/* Environment Tag */}

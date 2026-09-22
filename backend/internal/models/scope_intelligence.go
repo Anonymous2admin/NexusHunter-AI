@@ -64,11 +64,15 @@ type ScopeImportReview struct {
 	PathRulesCount     int                    `json:"path_rules_count"`
 	WarningsCount      int                    `json:"warnings_count"`
 	AmbiguousCount     int                    `json:"ambiguous_count"`
-	Normalizations     []ScopeNormalization   `json:"normalizations"`
-	CanonicalScope     *CanonicalScope        `json:"canonical_scope"`
-	TargetID           string                 `json:"target_id,omitempty"`
-	CreatedAt          time.Time              `json:"created_at"`
-	ConfirmedAt        *time.Time             `json:"confirmed_at,omitempty"`
+	Normalizations               []ScopeNormalization   `json:"normalizations"`
+	CanonicalScope               *CanonicalScope        `json:"canonical_scope"`
+	OriginalFileSHA256           string                 `json:"original_file_sha256"`
+	CanonicalScopeSHA256         string                 `json:"canonical_scope_sha256"`
+	NormalizationManifestSHA256  string                 `json:"normalization_manifest_sha256"`
+	SelectionReason              string                 `json:"selection_reason,omitempty"`
+	TargetID                     string                 `json:"target_id,omitempty"`
+	CreatedAt                    time.Time              `json:"created_at"`
+	ConfirmedAt                  *time.Time             `json:"confirmed_at,omitempty"`
 }
 
 // JSAsset records a discovered JavaScript file and its fetch/provenance metadata.

@@ -3,6 +3,7 @@ package cloudintel
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -44,6 +45,18 @@ func NewService(scopeSvc scope.ScopeService, timeout time.Duration) Service {
 		httpClient: &http.Client{
 			Transport: transport,
 			Timeout:   timeout,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= 3 {
+					return errors.New("too many redirects during cloud probing")
+				}
+				if req.URL != nil && req.URL.Hostname() != "" {
+					restricted, reason := safenet.IsRestrictedHost(req.Context(), req.URL.Hostname())
+					if restricted {
+						return fmt.Errorf("redirect blocked to restricted host (%s): %s", req.URL.Hostname(), reason)
+					}
+				}
+				return nil
+			},
 		},
 	}
 }
@@ -157,6 +170,24 @@ func (s *cloudService) ProbeSafePublicStatus(ctx context.Context, target *models
 	if probeURL == "" {
 		ref.ValidationStatus = "UNCHECKED"
 		return nil
+	}
+
+	// Section 20 Scope Boundary Invariant:
+	// If the resource is explicitly OUT_OF_SCOPE or evaluates outside the target scope boundaries,
+	// DO NOT PROBE over the network. Set status to SKIPPED_OUT_OF_SCOPE.
+	if ref.ScopeStatus == "OUT_OF_SCOPE" {
+		ref.ValidationStatus = "SKIPPED_OUT_OF_SCOPE"
+		return nil
+	}
+
+	parsedProbe, err := url.Parse(probeURL)
+	if err == nil && parsedProbe.Hostname() != "" && s.scopeSvc != nil {
+		decision := s.scopeSvc.Evaluate(target, parsedProbe.Hostname(), probeURL)
+		if !decision.InScope {
+			ref.ScopeStatus = "OUT_OF_SCOPE"
+			ref.ValidationStatus = "SKIPPED_OUT_OF_SCOPE"
+			return nil
+		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, probeURL, nil)

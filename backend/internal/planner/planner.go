@@ -86,6 +86,34 @@ func randomID(prefix string) string {
 	return fmt.Sprintf("%s-%s", prefix, hex.EncodeToString(b))
 }
 
+// SanitizeUntrustedText neutralizes potential prompt injections or command framing from web targets.
+func SanitizeUntrustedText(input string) string {
+	if len(input) > 256 {
+		input = input[:256]
+	}
+	lower := strings.ToLower(input)
+	injectionPatterns := []string{
+		"ignore previous",
+		"ignore all previous",
+		"system prompt",
+		"override rules",
+		"bypass safety",
+		"you are now in",
+		"act as an unrestricted",
+		"output confirmed",
+		"mark as verified",
+		"eval(",
+		"<script",
+	}
+	for _, p := range injectionPatterns {
+		if strings.Contains(lower, p) {
+			input = strings.ReplaceAll(input, p, "[REDACTED_INJECTION_PATTERN]")
+			lower = strings.ToLower(input)
+		}
+	}
+	return strings.TrimSpace(input)
+}
+
 // GenerateInvestigationPlan synthesizes an investigation plan and human validation checklist.
 func (s *plannerService) GenerateInvestigationPlan(ctx context.Context, target *models.Target, assetID string, input PlannerContext) (*models.InvestigationPlan, error) {
 	if target == nil {
@@ -96,8 +124,9 @@ func (s *plannerService) GenerateInvestigationPlan(ctx context.Context, target *
 	title := "Structured Asset Surface & Boundary Investigation"
 	hypothesis := "Asset exposes differentiated endpoints or structural references requiring controlled verification"
 	if input.HypothesisTitle != "" {
-		hypothesis = input.HypothesisTitle
-		title = fmt.Sprintf("Investigation: %s", input.HypothesisTitle)
+		sanitizedHyp := SanitizeUntrustedText(input.HypothesisTitle)
+		hypothesis = sanitizedHyp
+		title = fmt.Sprintf("Investigation: %s", sanitizedHyp)
 	}
 
 	observedFacts := make([]string, 0)

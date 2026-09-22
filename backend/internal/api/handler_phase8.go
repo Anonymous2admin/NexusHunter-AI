@@ -120,6 +120,7 @@ func (h *Handler) GetScopeImport(w http.ResponseWriter, r *http.Request) {
 
 type ConfirmScopeImportReq struct {
 	SelectedRootDomain string `json:"selected_root_domain"`
+	SelectionReason    string `json:"selection_reason,omitempty"`
 	TargetName         string `json:"target_name"`
 }
 
@@ -144,12 +145,52 @@ func (h *Handler) ConfirmScopeImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Invariant: Cannot re-confirm an already confirmed import
+	if rev.Status == "CONFIRMED" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "scope import has already been confirmed"})
+		return
+	}
+	if rev.Status == "REJECTED" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "cannot create target from rejected scope import"})
+		return
+	}
+
 	selectedRoot := req.SelectedRootDomain
 	if selectedRoot == "" {
 		selectedRoot = rev.SelectedRootDomain
 	}
-	if selectedRoot == "" && len(rev.RootDomains) > 0 {
+
+	// Section 8 Invariant: When multiple root domains exist, NO silent default selection is permitted
+	if len(rev.RootDomains) > 1 && req.SelectedRootDomain == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "multiple root domains discovered; explicit selected_root_domain is strictly required",
+		})
+		return
+	}
+
+	// If exactly one root domain existed and was candidate
+	if selectedRoot == "" && len(rev.RootDomains) == 1 {
 		selectedRoot = rev.RootDomains[0].NormalizedDomain
+	}
+
+	if selectedRoot == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no valid root domain selected for target"})
+		return
+	}
+
+	// Verify selectedRoot is among discovered candidates
+	validCandidate := false
+	for _, rd := range rev.RootDomains {
+		if rd.NormalizedDomain == selectedRoot {
+			validCandidate = true
+			break
+		}
+	}
+	if !validCandidate {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "selected_root_domain is not among discovered root domain candidates",
+		})
+		return
 	}
 
 	targetName := req.TargetName
@@ -157,23 +198,31 @@ func (h *Handler) ConfirmScopeImport(w http.ResponseWriter, r *http.Request) {
 		targetName = selectedRoot
 	}
 
-	// Create or find Target with CanonicalScope
+	now := time.Now().UTC()
+
+	// Section 10 Target Creation Invariant:
+	// A target created from an imported scope must contain:
+	// target_id, scope_import_id, canonical_scope_hash, primary_root_domain, root_domains, include/exclude rules, confirmation_timestamp
 	target := &models.Target{
-		ID:         "target-" + strconv.FormatInt(time.Now().UnixNano(), 36),
-		Name:       targetName,
-		RootDomain: selectedRoot,
+		ID:                    "target-" + strconv.FormatInt(time.Now().UnixNano(), 36),
+		Name:                  targetName,
+		RootDomain:            selectedRoot,
+		ScopeImportID:         rev.ID,
+		CanonicalScopeHash:    rev.CanonicalScopeSHA256,
+		ConfirmationTimestamp: &now,
 		ScopeConfig: &models.AdvancedScopeConfig{
 			AdvancedMode: true,
 		},
-		CreatedAt: time.Now().UTC(),
-		UpdatedAt: time.Now().UTC(),
+		Status:    models.TargetStatusActive,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 
 	if rev.CanonicalScope != nil {
+		target.AllowedDomains = rev.CanonicalScope.RootDomains
 		target.ScopeConfig.Include = append(target.ScopeConfig.Include, rev.CanonicalScope.IncludeHosts...)
 		target.ScopeConfig.Exclude = append(target.ScopeConfig.Exclude, rev.CanonicalScope.ExcludeHosts...)
 	}
-
 
 	if err := h.storage.Create(ctx, target); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create target: " + err.Error()})
@@ -184,6 +233,8 @@ func (h *Handler) ConfirmScopeImport(w http.ResponseWriter, r *http.Request) {
 	rev.Status = "CONFIRMED"
 	rev.TargetID = target.ID
 	rev.SelectedRootDomain = selectedRoot
+	rev.ConfirmedAt = &now
+	rev.SelectionReason = req.SelectionReason
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"status":         "CONFIRMED",

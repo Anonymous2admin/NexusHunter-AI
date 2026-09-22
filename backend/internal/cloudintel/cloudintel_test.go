@@ -54,3 +54,47 @@ func TestCloudIntel_PassiveExtraction(t *testing.T) {
 		t.Errorf("expected AWS, Azure, and GCP providers to be identified, got: %v", providers)
 	}
 }
+
+// Section 20 Test: Verify scope boundary check prevents network probing of out-of-scope cloud resources
+func TestCloudIntel_ScopeBoundaryEnforcedBeforeProbe(t *testing.T) {
+	validator := scope.NewValidator()
+	target := &models.Target{
+		ID:         "tgt-cloud",
+		RootDomain: "target.com",
+		ScopeConfig: &models.AdvancedScopeConfig{
+			AdvancedMode: true,
+			Include: []models.AdvancedScopeRule{
+				{Enabled: true, Host: `^.*\.target\.com$`},
+			},
+			Exclude: []models.AdvancedScopeRule{
+				{Enabled: true, Host: `^.*\.amazonaws\.com$`},
+			},
+		},
+	}
+
+	service := NewService(validator, 2*time.Second)
+
+	ref := &models.CloudReference{
+		ID:               "cld-test-out-of-scope",
+		TargetID:         target.ID,
+		Provider:         "AWS",
+		ResourceType:     "S3_BUCKET",
+		RawReference:     "https://unauthorized-bucket.s3.amazonaws.com",
+		NormalizedTarget: "unauthorized-bucket",
+		ScopeStatus:      "OUT_OF_SCOPE",
+		ValidationStatus: "UNCHECKED",
+	}
+
+	err := service.ProbeSafePublicStatus(context.Background(), target, ref)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Must be SKIPPED_OUT_OF_SCOPE, and StatusCode must remain 0 (no request made)
+	if ref.ValidationStatus != "SKIPPED_OUT_OF_SCOPE" {
+		t.Errorf("expected ValidationStatus SKIPPED_OUT_OF_SCOPE, got: %s", ref.ValidationStatus)
+	}
+	if ref.StatusCode != 0 {
+		t.Errorf("expected 0 StatusCode (no network probe executed), got: %d", ref.StatusCode)
+	}
+}

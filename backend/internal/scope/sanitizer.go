@@ -2,6 +2,7 @@ package scope
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -83,11 +84,19 @@ func (s *ScopeImportSanitizer) SanitizeScopeFile(raw []byte, filename string) (*
 		return nil, ErrNoDomainsExtracted
 	}
 
-	// Default selection candidate
+	// Fail-closed root domain selection:
+	// If exactly 1 root domain exists, it is marked as CANDIDATE.
+	// If multiple roots exist, NO silent default selection is permitted (must be confirmed by operator).
 	selectedDomain := ""
-	if len(rootCandidates) > 0 {
+	if len(rootCandidates) == 1 {
 		selectedDomain = rootCandidates[0].NormalizedDomain
-		rootCandidates[0].Status = "SELECTED"
+		rootCandidates[0].Status = "CANDIDATE"
+	} else {
+		for i := range rootCandidates {
+			if rootCandidates[i].Status != "AMBIGUOUS" {
+				rootCandidates[i].Status = "DISCOVERED"
+			}
+		}
 	}
 	canonical.PrimaryRootDomain = selectedDomain
 
@@ -112,22 +121,37 @@ func (s *ScopeImportSanitizer) SanitizeScopeFile(raw []byte, filename string) (*
 		}
 	}
 
+	// Compute Cryptographic Hashes for Full Provenance & Auditability (Section 9)
+	origFileHash := sha256.Sum256(raw)
+	origFileHex := hex.EncodeToString(origFileHash[:])
+
+	canonicalJSON, _ := json.Marshal(canonical)
+	canonicalHash := sha256.Sum256(canonicalJSON)
+	canonicalHex := hex.EncodeToString(canonicalHash[:])
+
+	normJSON, _ := json.Marshal(normalizations)
+	normHash := sha256.Sum256(normJSON)
+	normHex := hex.EncodeToString(normHash[:])
+
 	review := &models.ScopeImportReview{
-		ID:                 randomID("rev"),
-		FileName:           filename,
-		Status:             "PENDING_CONFIRMATION",
-		RootDomains:        rootCandidates,
-		SelectedRootDomain: selectedDomain,
-		RulesDiscovered:    len(canonical.IncludeHosts) + len(canonical.ExcludeHosts) + len(canonical.IncludeURLs) + len(canonical.ExcludeURLs),
-		IncludeHostsCount:  len(canonical.IncludeHosts),
-		ExcludeHostsCount:  len(canonical.ExcludeHosts),
-		RegexRulesCount:    len(canonical.IncludeHosts) + len(canonical.ExcludeHosts),
-		PathRulesCount:     len(canonical.PathRules),
-		WarningsCount:      warningsCount,
-		AmbiguousCount:     ambiguousCount,
-		Normalizations:     normalizations,
-		CanonicalScope:     canonical,
-		CreatedAt:          time.Now().UTC(),
+		ID:                          randomID("rev"),
+		FileName:                    filename,
+		Status:                      "PENDING_CONFIRMATION",
+		RootDomains:                 rootCandidates,
+		SelectedRootDomain:          selectedDomain,
+		RulesDiscovered:             len(canonical.IncludeHosts) + len(canonical.ExcludeHosts) + len(canonical.IncludeURLs) + len(canonical.ExcludeURLs),
+		IncludeHostsCount:           len(canonical.IncludeHosts),
+		ExcludeHostsCount:           len(canonical.ExcludeHosts),
+		RegexRulesCount:             len(canonical.IncludeHosts) + len(canonical.ExcludeHosts),
+		PathRulesCount:              len(canonical.PathRules),
+		WarningsCount:               warningsCount,
+		AmbiguousCount:              ambiguousCount,
+		Normalizations:              normalizations,
+		CanonicalScope:              canonical,
+		OriginalFileSHA256:          origFileHex,
+		CanonicalScopeSHA256:        canonicalHex,
+		NormalizationManifestSHA256: normHex,
+		CreatedAt:                   time.Now().UTC(),
 	}
 
 	return review, nil
@@ -399,10 +423,23 @@ func (s *ScopeImportSanitizer) discoverRootDomains(canonical *models.CanonicalSc
 			cleaned = strings.ReplaceAll(cleaned, "\\.", ".")
 			cleaned = strings.TrimSpace(cleaned)
 
-			// Simple domain extraction regex
-			domainMatch := regexp.MustCompile(`([a-zA-Z0-9\-]+\.[a-zA-Z]{2,})`).FindString(cleaned)
-			if domainMatch != "" && isValidHostname(domainMatch) {
-				domain := strings.ToLower(domainMatch)
+			// Extract base/root domain (e.g. admin.shopify.com -> shopify.com)
+			parts := strings.Split(cleaned, ".")
+			var domain string
+			if len(parts) >= 2 {
+				lastTwo := parts[len(parts)-2] + "." + parts[len(parts)-1]
+				if isValidHostname(lastTwo) {
+					domain = strings.ToLower(lastTwo)
+				}
+			}
+			if domain == "" {
+				domainMatch := regexp.MustCompile(`([a-zA-Z0-9\-]+\.[a-zA-Z]{2,})$`).FindString(cleaned)
+				if domainMatch != "" && isValidHostname(domainMatch) {
+					domain = strings.ToLower(domainMatch)
+				}
+			}
+
+			if domain != "" && isValidHostname(domain) {
 				if _, exists := discovered[domain]; !exists {
 					discovered[domain] = models.RootDomainCandidate{
 						ID:               randomID("cand"),

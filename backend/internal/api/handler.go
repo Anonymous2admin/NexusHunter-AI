@@ -120,6 +120,7 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"status":  "ok",
 		"service": h.cfg.ServiceName,
+		"mode":    "LIVE",
 		"time":    time.Now().UTC().Format(time.RFC3339),
 	})
 }

@@ -30,18 +30,23 @@ func (s *PostgresPhase8Storage) SaveImportReview(ctx context.Context, review *mo
 			id, file_name, status, selected_root_domain, target_id,
 			rules_discovered, include_hosts_count, exclude_hosts_count,
 			regex_rules_count, path_rules_count, warnings_count, ambiguous_count,
-			root_domains, normalizations, canonical_scope, created_at, confirmed_at
+			root_domains, normalizations, canonical_scope,
+			original_file_sha256, canonical_scope_sha256, normalization_manifest_sha256, selection_reason,
+			created_at, confirmed_at
 		) VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7, $8,
 			$9, $10, $11, $12,
-			$13, $14, $15, $16, $17
+			$13, $14, $15,
+			$16, $17, $18, $19,
+			$20, $21
 		)
 		ON CONFLICT (id) DO UPDATE SET
 			status = EXCLUDED.status,
 			selected_root_domain = EXCLUDED.selected_root_domain,
 			target_id = EXCLUDED.target_id,
-			confirmed_at = EXCLUDED.confirmed_at;
+			confirmed_at = EXCLUDED.confirmed_at,
+			selection_reason = EXCLUDED.selection_reason;
 	`
 	rootJSON, _ := json.Marshal(review.RootDomains)
 	normJSON, _ := json.Marshal(review.Normalizations)
@@ -56,7 +61,9 @@ func (s *PostgresPhase8Storage) SaveImportReview(ctx context.Context, review *mo
 		review.ID, review.FileName, review.Status, review.SelectedRootDomain, targetIDVal,
 		review.RulesDiscovered, review.IncludeHostsCount, review.ExcludeHostsCount,
 		review.RegexRulesCount, review.PathRulesCount, review.WarningsCount, review.AmbiguousCount,
-		rootJSON, normJSON, canonJSON, review.CreatedAt, review.ConfirmedAt,
+		rootJSON, normJSON, canonJSON,
+		review.OriginalFileSHA256, review.CanonicalScopeSHA256, review.NormalizationManifestSHA256, review.SelectionReason,
+		review.CreatedAt, review.ConfirmedAt,
 	)
 	return err
 }
@@ -66,7 +73,10 @@ func (s *PostgresPhase8Storage) GetImportReview(ctx context.Context, id string) 
 		SELECT id, file_name, status, selected_root_domain, COALESCE(target_id, ''),
 		       rules_discovered, include_hosts_count, exclude_hosts_count,
 		       regex_rules_count, path_rules_count, warnings_count, ambiguous_count,
-		       root_domains, normalizations, canonical_scope, created_at, confirmed_at
+		       root_domains, normalizations, canonical_scope,
+		       COALESCE(original_file_sha256, ''), COALESCE(canonical_scope_sha256, ''),
+		       COALESCE(normalization_manifest_sha256, ''), COALESCE(selection_reason, ''),
+		       created_at, confirmed_at
 		FROM scope_imports
 		WHERE id = $1;
 	`
@@ -79,7 +89,10 @@ func (s *PostgresPhase8Storage) GetImportReview(ctx context.Context, id string) 
 		&rev.ID, &rev.FileName, &rev.Status, &rev.SelectedRootDomain, &targetID,
 		&rev.RulesDiscovered, &rev.IncludeHostsCount, &rev.ExcludeHostsCount,
 		&rev.RegexRulesCount, &rev.PathRulesCount, &rev.WarningsCount, &rev.AmbiguousCount,
-		&rootJSON, &normJSON, &canonJSON, &rev.CreatedAt, &rev.ConfirmedAt,
+		&rootJSON, &normJSON, &canonJSON,
+		&rev.OriginalFileSHA256, &rev.CanonicalScopeSHA256,
+		&rev.NormalizationManifestSHA256, &rev.SelectionReason,
+		&rev.CreatedAt, &rev.ConfirmedAt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -102,7 +115,10 @@ func (s *PostgresPhase8Storage) ListImportReviews(ctx context.Context) ([]*model
 		SELECT id, file_name, status, selected_root_domain, COALESCE(target_id, ''),
 		       rules_discovered, include_hosts_count, exclude_hosts_count,
 		       regex_rules_count, path_rules_count, warnings_count, ambiguous_count,
-		       root_domains, normalizations, canonical_scope, created_at, confirmed_at
+		       root_domains, normalizations, canonical_scope,
+		       COALESCE(original_file_sha256, ''), COALESCE(canonical_scope_sha256, ''),
+		       COALESCE(normalization_manifest_sha256, ''), COALESCE(selection_reason, ''),
+		       created_at, confirmed_at
 		FROM scope_imports
 		ORDER BY created_at DESC;
 	`
@@ -121,7 +137,10 @@ func (s *PostgresPhase8Storage) ListImportReviews(ctx context.Context) ([]*model
 			&rev.ID, &rev.FileName, &rev.Status, &rev.SelectedRootDomain, &targetID,
 			&rev.RulesDiscovered, &rev.IncludeHostsCount, &rev.ExcludeHostsCount,
 			&rev.RegexRulesCount, &rev.PathRulesCount, &rev.WarningsCount, &rev.AmbiguousCount,
-			&rootJSON, &normJSON, &canonJSON, &rev.CreatedAt, &rev.ConfirmedAt,
+			&rootJSON, &normJSON, &canonJSON,
+			&rev.OriginalFileSHA256, &rev.CanonicalScopeSHA256,
+			&rev.NormalizationManifestSHA256, &rev.SelectionReason,
+			&rev.CreatedAt, &rev.ConfirmedAt,
 		); err != nil {
 			return nil, err
 		}

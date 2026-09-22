@@ -32,9 +32,12 @@ type Target struct {
 	AllowedDomains     []string             `json:"allowed_domains"`
 	AllowedURLPatterns []string             `json:"allowed_url_patterns"`
 	ExcludedPatterns   []string             `json:"excluded_patterns"`
-	ScopeConfig        *AdvancedScopeConfig `json:"scope_config,omitempty"`
-	RawScopeJSON       string               `json:"raw_scope_json,omitempty"`
-	Status             TargetStatus         `json:"status"`
+	ScopeConfig           *AdvancedScopeConfig `json:"scope_config,omitempty"`
+	RawScopeJSON          string               `json:"raw_scope_json,omitempty"`
+	ScopeImportID         string               `json:"scope_import_id,omitempty"`
+	CanonicalScopeHash    string               `json:"canonical_scope_hash,omitempty"`
+	ConfirmationTimestamp *time.Time           `json:"confirmation_timestamp,omitempty"`
+	Status                TargetStatus         `json:"status"`
 	CreatedAt          time.Time            `json:"created_at"`
 	UpdatedAt          time.Time            `json:"updated_at"`
 }
