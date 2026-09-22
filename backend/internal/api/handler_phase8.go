@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/cloudintel"
@@ -309,7 +308,7 @@ func (h *Handler) TriggerJSAnalysis(w http.ResponseWriter, r *http.Request) {
 			_ = h.p8JSRepo.SaveJSReference(ctx, ref)
 		}
 		for _, sec := range secrets {
-			_ = h.p8JSRepo.SaveJSSecret(ctx, sec)
+			_ = h.p8JSRepo.SaveSecretIndicator(ctx, sec)
 		}
 	}
 
@@ -377,7 +376,7 @@ func (h *Handler) ValidateCloudReference(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	_ = h.p8CloudRepo.UpdateCloudReference(ctx, ref)
+	_ = h.p8CloudRepo.UpdateCloudValidation(ctx, ref.ID, ref.ValidationStatus, ref.StatusCode, ref.PublicAccessible)
 	writeJSON(w, http.StatusOK, ref)
 }
 

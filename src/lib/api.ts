@@ -369,7 +369,7 @@ class ApiClient {
   }
 
   async getEvidenceDiff(id: string): Promise<any> {
-    return this.request(`/api/evidence/diffs/${encodeURIComponent(id)}`);
+    return this.request(`/api/evidence-diffs/${encodeURIComponent(id)}`);
   }
 
   async getTargetDiffs(targetId: string): Promise<any[]> {

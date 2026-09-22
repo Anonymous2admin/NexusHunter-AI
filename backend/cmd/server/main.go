@@ -190,8 +190,8 @@ func main() {
 
 	// Initialize Phase 8 Intelligence (Scope, JS, Cloud, WAF, Planner)
 	scopeSanitizer := scope.NewSanitizer()
-	jsIntelSvc := jsintel.NewService(scopeValidator, evidenceStore)
-	cloudIntelSvc := cloudintel.NewService(nil, scopeValidator, evidenceStore)
+	jsIntelSvc := jsintel.NewService(scopeValidator, jsintel.DefaultLimits())
+	cloudIntelSvc := cloudintel.NewService(scopeValidator, 10*time.Second)
 	wafDetector := waf.NewDetector()
 	plannerSvc := planner.NewService(scopeValidator)
 
