@@ -18,6 +18,8 @@ import {
   TargetIntelligenceSummary,
   AssetDetail,
   EvidenceIntegrityResult,
+  RuntimeMode,
+  DataResponse,
 } from '../types';
 
 export class ApiError extends Error {
@@ -36,9 +38,14 @@ export class ApiError extends Error {
 
 class ApiClient {
   private baseURL: string;
+  public lastOrigin: 'LIVE_BACKEND' | 'DEMO_SYNTHETIC' | 'OFFLINE' = 'OFFLINE';
 
   constructor(baseURL: string = '') {
     this.baseURL = baseURL;
+  }
+
+  public getLastOrigin(): 'LIVE_BACKEND' | 'DEMO_SYNTHETIC' | 'OFFLINE' {
+    return this.lastOrigin;
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -55,6 +62,14 @@ class ApiClient {
         ...options,
         headers,
       });
+
+      // Capture origin header
+      const originHeader = response.headers.get('x-nexus-origin');
+      if (originHeader === 'LIVE_BACKEND') {
+        this.lastOrigin = 'LIVE_BACKEND';
+      } else if (originHeader === 'DEMO_SYNTHETIC') {
+        this.lastOrigin = 'DEMO_SYNTHETIC';
+      }
 
       // Handle HTTP error statuses
       if (!response.ok) {
@@ -92,6 +107,7 @@ class ApiClient {
       if (err instanceof ApiError) {
         throw err;
       }
+      this.lastOrigin = 'OFFLINE';
       // Network failures, CORS blocks, connection refused
       throw new ApiError(
         err.message || 'Network connectivity error. Could not connect to API server.',
@@ -99,6 +115,29 @@ class ApiClient {
         'NETWORK_ERROR',
         'Check network connectivity or backend server status.'
       );
+    }
+  }
+
+  // Safe request helper that yields a typed DataResponse<T> with explicit status & origin
+  async requestSafe<T>(apiFn: () => Promise<T>): Promise<DataResponse<T>> {
+    try {
+      const data = await apiFn();
+      return {
+        status: 'SUCCESS',
+        data,
+        error: null,
+        origin: this.lastOrigin,
+        timestamp: new Date().toISOString(),
+      };
+    } catch (err: any) {
+      const isOffline = err?.code === 'NETWORK_ERROR' || err?.status === 0;
+      return {
+        status: isOffline ? 'OFFLINE' : 'ERROR',
+        data: null,
+        error: err?.message || 'Unknown request error',
+        origin: isOffline ? 'OFFLINE' : this.lastOrigin,
+        timestamp: new Date().toISOString(),
+      };
     }
   }
 

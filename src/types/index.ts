@@ -1018,5 +1018,22 @@ export interface SecurityControlRecord {
   evaluated_at: string;
 }
 
+// ==========================================
+// Phase 8.2R: UI Truth Layer & Runtime Integrity
+// ==========================================
+
+export type RuntimeMode = 'LIVE' | 'DEMO' | 'OFFLINE' | 'PARTIAL';
+
+export type RequestStatus = 'IDLE' | 'LOADING' | 'SUCCESS' | 'ERROR' | 'OFFLINE';
+
+export interface DataResponse<T> {
+  status: RequestStatus;
+  data: T | null;
+  error: string | null;
+  origin?: 'LIVE_BACKEND' | 'DEMO_SYNTHETIC' | 'DERIVED' | 'SIMULATED';
+  timestamp?: string;
+}
+
+
 
 

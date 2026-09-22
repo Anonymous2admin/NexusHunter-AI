@@ -46,7 +46,7 @@ export const Topbar: React.FC<TopbarProps> = ({
         {/* Health status pill with explicit LIVE / DEMO / OFFLINE differentiation */}
         <div
           id="topbar-connection-indicator"
-          className={`hidden sm:flex items-center gap-2 rounded-full border px-3 py-1 ${
+          className={`flex items-center gap-1.5 sm:gap-2 rounded-full border px-2.5 py-1 ${
             health?.mode === 'LIVE'
               ? 'border-emerald-800/80 bg-emerald-950/40 text-emerald-300'
               : health?.mode === 'DEMO_FALLBACK'
@@ -55,7 +55,7 @@ export const Topbar: React.FC<TopbarProps> = ({
           }`}
         >
           <span
-            className={`h-2 w-2 rounded-full ${
+            className={`h-2 w-2 rounded-full shrink-0 ${
               health?.mode === 'LIVE'
                 ? 'bg-emerald-400 animate-pulse'
                 : health?.mode === 'DEMO_FALLBACK'
@@ -63,12 +63,19 @@ export const Topbar: React.FC<TopbarProps> = ({
                 : 'bg-rose-400'
             }`}
           />
-          <span className="text-[11px] font-medium tracking-wide">
+          <span className="text-[10px] sm:text-[11px] font-medium tracking-wide">
             {health?.mode === 'LIVE'
-              ? 'LIVE ENGINE'
+              ? 'LIVE'
               : health?.mode === 'DEMO_FALLBACK'
-              ? 'DEMO (SYNTHETIC FALLBACK)'
+              ? 'DEMO'
               : 'OFFLINE'}
+          </span>
+          <span className="hidden md:inline text-[10px] opacity-75">
+            {health?.mode === 'LIVE'
+              ? '(ENGINE)'
+              : health?.mode === 'DEMO_FALLBACK'
+              ? '(SYNTHETIC)'
+              : '(NO BACKEND)'}
           </span>
         </div>
 

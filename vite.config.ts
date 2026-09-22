@@ -1597,6 +1597,8 @@ function nexusApiPlugin(): Plugin {
         }
 
         res.setHeader('Content-Type', 'application/json');
+        res.setHeader('X-Nexus-Origin', 'DEMO_SYNTHETIC');
+        res.setHeader('X-Nexus-Mode', 'DEMO_FALLBACK');
 
         // Helper to parse JSON body from buffered stream
         const readBody = (): Promise<any> => {
