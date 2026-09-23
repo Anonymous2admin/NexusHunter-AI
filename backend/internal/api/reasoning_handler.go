@@ -150,6 +150,24 @@ func (h *Handler) UpdateHypothesisStatus(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Phase 8.2R: Epistemic Gate for SUPPORTED status
+	if req.Status == models.HypothesisStatusSupported {
+		if len(hyp.MissingEvidence) > 0 {
+			Error(w, http.StatusBadRequest, "EVIDENCE_REQUIREMENTS_UNSATISFIED", fmt.Sprintf("cannot transition to SUPPORTED: %d missing evidence requirements remain unsatisfied", len(hyp.MissingEvidence)), "")
+			return
+		}
+		if len(hyp.SupportingEvidence) == 0 {
+			Error(w, http.StatusBadRequest, "NO_SUPPORTING_EVIDENCE", "cannot transition to SUPPORTED without at least one verified supporting evidence record", "")
+			return
+		}
+		for _, fc := range hyp.FalsificationConditions {
+			if fc.Result == "PENDING" {
+				Error(w, http.StatusBadRequest, "FALSIFICATION_CONDITIONS_PENDING", "cannot transition to SUPPORTED while falsification conditions remain unevaluated", "")
+				return
+			}
+		}
+	}
+
 	if err := h.reasoningRepo.UpdateHypothesisStatus(r.Context(), id, req.Status); err != nil {
 		Error(w, http.StatusInternalServerError, "UPDATE_FAILED", "failed to update hypothesis status", err.Error())
 		return
@@ -343,88 +361,19 @@ func (h *Handler) ExecuteInvestigationStep(w http.ResponseWriter, r *http.Reques
 	// Bounded execution based on ActionType
 	switch step.ActionType {
 	case "CAPTURE_BASELINE":
-		if h.evidenceEng != nil {
-			baselineEv := &models.Evidence{
-				TargetID:     inv.TargetID,
-				AssetID:      inv.AssetID,
-				EvidenceType: models.EvidenceHTTPRequest,
-				Summary:      fmt.Sprintf("Automated baseline capture for investigation %s (Step %d: %s)", inv.ID, step.StepNumber, step.Name),
-				Provenance: models.EvidenceProvenance{
-					Source:      models.SourceControlledValidation,
-					OperationID: inv.ID,
-					TargetID:    inv.TargetID,
-					AssetID:     inv.AssetID,
-					CapturedAt:  now,
-					Initiator:   "InvestigationEngine",
-					Notes:       step.Description,
-				},
-				ScopeDecision: models.ScopeDecisionRecord{
-					IsInScope:   true,
-					TargetID:    inv.TargetID,
-					RuleMatched: "STRICT_SCOPE_ALLOWLIST",
-					Reason:      "Authorized investigation baseline probe",
-					EvaluatedAt: now,
-				},
-				Request: &models.HTTPRequestContext{
-					Method: "GET",
-					URL:    fmt.Sprintf("https://target-%s.internal/baseline", inv.TargetID[:min(8, len(inv.TargetID))]),
-				},
-				Response: &models.HTTPResponseContext{
-					StatusCode: 200,
-					BodyHash:   "sha256-baseline-verified",
-					BodyLength: 512,
-				},
-			}
-			recorded, err := h.evidenceEng.RecordEvidence(r.Context(), baselineEv)
-			if err == nil && recorded != nil {
-				step.ResultEvidenceID = recorded.ID
-				step.Status = "COMPLETED"
-				inv.GeneratedEvidence = append(inv.GeneratedEvidence, recorded.ID)
-			} else {
-				step.Status = "COMPLETED"
-				step.ResultEvidenceID = ""
-			}
-		} else {
-			step.Status = "COMPLETED"
-		}
+		// Phase 8.2R: Truthful execution: unless live network probe is actively dispatched via scope-checked client,
+		// mark as SIMULATED rather than manufacturing fake HTTP 200 responses.
+		step.Status = "SIMULATED"
+		step.Description = fmt.Sprintf("%s [SIMULATED: Live non-destructive network probe awaiting researcher trigger]", step.Description)
 
 	case "COMPARE_CONTEXTS":
-		step.Status = "COMPLETED"
-		if len(inv.GeneratedEvidence) > 0 && h.evidenceEng != nil {
-			diffEv := &models.Evidence{
-				TargetID:     inv.TargetID,
-				AssetID:      inv.AssetID,
-				EvidenceType: models.EvidenceDifferentialResult,
-				Summary:      fmt.Sprintf("Differential security analysis result for investigation %s", inv.ID),
-				Provenance: models.EvidenceProvenance{
-					Source:      models.SourceDifferentialEngine,
-					OperationID: inv.ID,
-					TargetID:    inv.TargetID,
-					AssetID:     inv.AssetID,
-					CapturedAt:  now,
-					Initiator:   "DifferentialEngine",
-				},
-				ScopeDecision: models.ScopeDecisionRecord{
-					IsInScope:   true,
-					TargetID:    inv.TargetID,
-					RuleMatched: "STRICT_SCOPE_ALLOWLIST",
-					Reason:      "Safe differential observation comparison",
-					EvaluatedAt: now,
-				},
-			}
-
-			recorded, err := h.evidenceEng.RecordEvidence(r.Context(), diffEv)
-			if err == nil && recorded != nil {
-				step.ResultEvidenceID = recorded.ID
-				inv.GeneratedEvidence = append(inv.GeneratedEvidence, recorded.ID)
-			}
-		}
+		step.Status = "SIMULATED"
 
 	case "EVALUATE_SEMANTICS":
-		step.Status = "COMPLETED"
+		step.Status = "SIMULATED"
 
 	case "FALSIFICATION_EVALUATION":
-		step.Status = "COMPLETED"
+		step.Status = "SIMULATED"
 
 	default:
 		step.Status = "NOT_EXECUTABLE_AUTOMATICALLY"
@@ -441,8 +390,8 @@ func (h *Handler) ExecuteInvestigationStep(w http.ResponseWriter, r *http.Reques
 	}
 
 	if allDone {
-		inv.Status = models.InvStatusCompleted
-		inv.ResultSummary = fmt.Sprintf("All bounded investigation steps completed safely under active scope constraints. %d evidence records produced.", len(inv.GeneratedEvidence))
+		inv.Status = models.InvestigationStatus("SIMULATED")
+		inv.ResultSummary = fmt.Sprintf("Investigation steps evaluated under sandbox simulation. %d evidence records evaluated.", len(inv.GeneratedEvidence))
 	}
 
 	_ = h.reasoningRepo.UpdateInvestigationStatus(r.Context(), id, inv.Status, inv.ResultSummary)

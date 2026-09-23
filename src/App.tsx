@@ -3,6 +3,7 @@ import { Target, ScanJob, SystemEvent, HealthResponse } from './types';
 import { api, ApiError } from './lib/api';
 import { Sidebar, NavTab } from './components/Sidebar';
 import { Topbar } from './components/Topbar';
+import { DemoBanner } from './components/DemoBanner';
 import { LoadingState } from './components/LoadingState';
 import { ErrorState } from './components/ErrorState';
 import { DashboardView } from './components/views/DashboardView';
@@ -187,11 +188,11 @@ export default function App() {
       subtitle: 'Topology graph, chronological difference ledger & prioritized attack-surface clusters',
     },
     evidence: {
-      title: 'Evidence Intelligence & Comparative Diffs',
+      title: 'Evidence Intelligence & Comparative Analysis',
       subtitle: 'Cryptographic provenance, 3-level comparative differentials & deterministic contradiction detection',
     },
     reasoning: {
-      title: 'Security Reasoning, Hypotheses & Investigation Engine',
+      title: 'Security Reasoning & Investigation',
       subtitle: 'Competing explanations, falsification conditions, missing evidence requirements & bounded investigations',
     },
     'scope-verifier': {
@@ -199,6 +200,10 @@ export default function App() {
       subtitle: 'Fail-closed verification against active target boundaries',
     },
   };
+
+  useEffect(() => {
+    document.title = `${tabTitles[activeTab]?.title || 'Security Platform'} | NexusHunter-AI`;
+  }, [activeTab]);
 
   return (
     <div className="flex min-h-screen bg-[#030712] text-slate-100 antialiased font-sans selection:bg-sky-500/30 selection:text-sky-200">
@@ -224,6 +229,8 @@ export default function App() {
           onRefresh={() => fetchData(true)}
           isRefreshing={isRefreshing}
         />
+
+        <DemoBanner />
 
         <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8 max-w-7xl w-full mx-auto">
           {isLoading ? (

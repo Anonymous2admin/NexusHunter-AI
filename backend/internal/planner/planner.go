@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/models"
@@ -68,6 +69,7 @@ type PlannerContext struct {
 }
 
 type plannerService struct {
+	mu       sync.RWMutex
 	scopeSvc scope.ScopeService
 	plans    map[string]*models.InvestigationPlan
 }
@@ -285,13 +287,23 @@ func (s *plannerService) ValidatePlan(plan *models.InvestigationPlan, target *mo
 
 // ApproveStep updates step status following human authorization.
 func (s *plannerService) ApproveStep(ctx context.Context, planID string, stepNumber int) (*models.InvestigationPlan, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	plan, exists := s.plans[planID]
 	if !exists {
 		return nil, errors.New("plan not found")
 	}
 
+	if plan.Status == "RUNNING" || plan.Status == "CANCELLED" || plan.Status == "COMPLETED" || plan.Status == "FAILED" {
+		return nil, fmt.Errorf("cannot approve step: plan is already in %s status", plan.Status)
+	}
+
 	for i := range plan.Steps {
 		if plan.Steps[i].StepNumber == stepNumber {
+			if plan.Steps[i].Status == "APPROVED" || plan.Steps[i].Status == "RUNNING" || plan.Steps[i].Status == "COMPLETED" {
+				return nil, fmt.Errorf("step %d is already %s", stepNumber, plan.Steps[i].Status)
+			}
 			now := time.Now().UTC()
 			plan.Steps[i].ApprovedByHuman = true
 			plan.Steps[i].ApprovedAt = &now

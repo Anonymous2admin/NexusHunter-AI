@@ -79,13 +79,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'evidence' as NavTab,
-      label: 'Evidence & Diffs',
+      label: 'Evidence & Comparative Analysis',
       icon: FileCode2,
       badge: evidenceCount > 0 ? evidenceCount : 'Verified',
     },
     {
       id: 'reasoning' as NavTab,
-      label: 'Security Reasoning',
+      label: 'Security Reasoning & Investigation',
       icon: Brain,
       badge: 'Logic',
     },

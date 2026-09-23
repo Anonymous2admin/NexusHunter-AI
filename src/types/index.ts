@@ -1026,11 +1026,13 @@ export type RuntimeMode = 'LIVE' | 'DEMO' | 'OFFLINE' | 'PARTIAL';
 
 export type RequestStatus = 'IDLE' | 'LOADING' | 'SUCCESS' | 'ERROR' | 'OFFLINE';
 
+export type DataOrigin = 'LIVE_BACKEND' | 'DEMO_SYNTHETIC' | 'DERIVED' | 'SIMULATED' | 'OFFLINE';
+
 export interface DataResponse<T> {
   status: RequestStatus;
   data: T | null;
   error: string | null;
-  origin?: 'LIVE_BACKEND' | 'DEMO_SYNTHETIC' | 'DERIVED' | 'SIMULATED';
+  origin?: DataOrigin;
   timestamp?: string;
 }
 

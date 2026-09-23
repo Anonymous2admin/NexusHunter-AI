@@ -1,5 +1,6 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import crypto from 'node:crypto';
 import http from 'node:http';
 import path from 'path';
 import { defineConfig, Plugin } from 'vite';
@@ -985,16 +986,18 @@ let securityContradictionsStore: any[] = [
     contradiction_type: 'AUTHENTICATION_CONTRADICTION',
     status: 'CONFIRMED_DEVIATION',
     severity: 'HIGH',
-    title: 'Authentication Missing on Token Issuance Endpoint',
-    description: 'Policy expects authentication enforcement (PRESENT), but observation confirmed unauthenticated 200 OK (ABSENT).',
+    title: '[SYNTHETIC EXAMPLE] Illustrative authentication-policy contradiction',
+    description: 'Policy expects authentication enforcement (PRESENT), but synthetic baseline demonstrated unauthenticated response behavior (ABSENT).',
     expectation_id: 'exp-01',
     observed_state: 'ABSENT',
     evidence_refs: ['ev-01'],
-    explanation: 'Deterministic observation confirms /v1/auth/token returned HTTP 200 and guest token without credentials. This contradicts explicit security specification.',
+    explanation: 'Demonstrative research model: /v1/auth/token modeled returning HTTP 200 without credentials for illustrative policy contradiction.',
     suggested_followup: [
       'Verify whether returned guest token possesses permission escalation capabilities',
       'Test token validation against downstream services /api/v1/user/*',
     ],
+    is_demo: true,
+    data_origin: 'DEMO_SYNTHETIC',
     created_at: new Date(Date.now() - 4800000).toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -1006,16 +1009,18 @@ let securityContradictionsStore: any[] = [
     contradiction_type: 'TRUST_BOUNDARY_CONTRADICTION',
     status: 'CONFIRMED_DEVIATION',
     severity: 'HIGH',
-    title: 'Arbitrary External Origin Reflection with Credentials',
-    description: 'Policy mandates strict origin whitelist (PRESENT), but server reflected untrusted external origin with Allow-Credentials: true (ABSENT).',
+    title: '[SYNTHETIC EXAMPLE] Illustrative CORS origin reflection pattern',
+    description: 'Policy mandates strict origin whitelist (PRESENT), but model illustrates reflected untrusted external origin with Allow-Credentials: true (ABSENT).',
     expectation_id: 'exp-02',
     observed_state: 'ABSENT',
     evidence_refs: ['ev-01'],
-    explanation: 'Origin header supplied as attacker-domain.org was directly mirrored in Access-Control-Allow-Origin response header with credentials enabled.',
+    explanation: 'Synthetic research sample: Origin header supplied as test-domain.org mirrored in Access-Control-Allow-Origin response header with credentials enabled.',
     suggested_followup: [
       'Confirm browser cross-origin credential transmission in isolated sandboxed runner',
       'Evaluate impact on authenticated user session hijacking',
     ],
+    is_demo: true,
+    data_origin: 'DEMO_SYNTHETIC',
     created_at: new Date(Date.now() - 4500000).toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -1315,13 +1320,15 @@ const hypothesesStore: any[] = [
     asset_id: 'ast-02',
     group_id: 'hg-01',
     category: 'AUTH_POLICY_DIFF',
-    title: 'Unauthenticated Token Issuance via Inadvertent Test Mock or Debug Bypass',
-    description: 'The endpoint /v1/auth/token emits active credentials without authorization headers, indicating either a debug route inadvertently deployed to production or an auth gateway routing flaw.',
+    title: '[SYNTHETIC EXAMPLE] Illustrative debug bypass theory on authentication routing',
+    description: 'Hypothetical security theory: The endpoint /v1/auth/token is hypothesized to emit credentials without authorization headers due to a test bypass or auth gateway routing flaw.',
     epistemic_status: 'HYPOTHESIZED',
     status: 'HYPOTHESIZED',
     reasoning_method: 'ABDUCTIVE',
     evidence_strength: 4,
     investigation_priority: 92,
+    is_demo: true,
+    data_origin: 'DEMO_SYNTHETIC',
     supporting_evidence: ['ev-01'],
     contradicting_evidence: [],
     missing_evidence: ['Response behavior with invalid Bearer token', 'JWT signature validation check'],
@@ -1349,13 +1356,15 @@ const hypothesesStore: any[] = [
     asset_id: 'ast-02',
     group_id: 'hg-01',
     category: 'INTENTIONAL_PUBLIC',
-    title: 'Public Anonymous Guest Session Token Issuance',
-    description: 'The /v1/auth/token endpoint intentionally issues limited-privilege guest sessions anonymously as part of onboarding flow.',
+    title: '[SYNTHETIC EXAMPLE] Illustrative public guest session model',
+    description: 'Alternative hypothesis: The /v1/auth/token endpoint intentionally issues limited-privilege guest sessions anonymously as part of onboarding flow.',
     epistemic_status: 'HYPOTHESIZED',
     status: 'HYPOTHESIZED',
     reasoning_method: 'COMPETING_THEORY',
     evidence_strength: 2,
     investigation_priority: 45,
+    is_demo: true,
+    data_origin: 'DEMO_SYNTHETIC',
     supporting_evidence: ['ev-01'],
     contradicting_evidence: [],
     missing_evidence: ['Scope claims inside decoded JWT payload'],
@@ -1377,13 +1386,15 @@ const hypothesesStore: any[] = [
     asset_id: 'ast-01',
     group_id: 'hg-02',
     category: 'WAF_BYPASS',
-    title: 'Direct Origin IP Reachability Exposing Internal Management Ports',
-    description: 'Origin server responds to direct IP connections on port 8080 without requiring Cloudflare mTLS or authenticated origin pull headers.',
+    title: '[SYNTHETIC EXAMPLE] Illustrative direct origin reachability model',
+    description: 'Hypothetical security theory: Origin server is modeled as responding to direct IP connections on port 8080 without requiring mTLS or authenticated origin pull headers.',
     epistemic_status: 'HYPOTHESIZED',
     status: 'INVESTIGATING',
     reasoning_method: 'DEDUCTIVE',
     evidence_strength: 4,
     investigation_priority: 88,
+    is_demo: true,
+    data_origin: 'DEMO_SYNTHETIC',
     supporting_evidence: ['ev-03'],
     contradicting_evidence: [],
     missing_evidence: ['Origin security group firewall rules'],
@@ -1407,8 +1418,10 @@ const investigationsStore: any[] = [
     target_id: 'tgt-alpha-001',
     asset_id: 'ast-02',
     hypothesis_id: 'hyp-01',
-    title: 'Controlled Non-Destructive Token Decoupling & Claim Verification',
+    title: '[SYNTHETIC INVESTIGATION] Controlled token decoupling model',
     status: 'PLANNED',
+    is_demo: true,
+    data_origin: 'DEMO_SYNTHETIC',
     safety_boundary: {
       is_non_destructive: true,
       requires_credential: false,
@@ -1435,6 +1448,44 @@ const investigationsStore: any[] = [
     ],
     generated_evidence: [],
     falsification_result: 'UNDETERMINED',
+    created_at: new Date(Date.now() - 1800000).toISOString(),
+    updated_at: new Date(Date.now() - 1800000).toISOString(),
+  },
+];
+
+const investigationPlansStore: any[] = [
+  {
+    id: 'plan-01',
+    target_id: 'tgt-alpha-001',
+    asset_id: 'ast-02',
+    hypothesis_id: 'hyp-01',
+    title: '[SYNTHETIC PLAN] Bounded token verification plan',
+    status: 'PLANNED',
+    epistemic_status: 'HYPOTHESIZED',
+    evidence_required_count: 2,
+    evidence_satisfied_count: 1,
+    is_demo: true,
+    data_origin: 'DEMO_SYNTHETIC',
+    steps: [
+      {
+        step_number: 1,
+        name: 'Fetch public JWKS',
+        description: 'Fetch public keys from standard discovery endpoint to evaluate signature veracity',
+        action_type: 'FETCH_URL',
+        target_url: 'https://example.com/.well-known/jwks.json',
+        status: 'PENDING',
+        approved_by_human: false,
+      },
+      {
+        step_number: 2,
+        name: 'Inspect token claims offline',
+        description: 'Inspect token payload claims for administrative privileges',
+        action_type: 'INSPECT_HEADERS',
+        target_url: 'https://example.com/v1/auth/token',
+        status: 'PENDING',
+        approved_by_human: false,
+      },
+    ],
     created_at: new Date(Date.now() - 1800000).toISOString(),
     updated_at: new Date(Date.now() - 1800000).toISOString(),
   },
@@ -2312,24 +2363,63 @@ function nexusApiPlugin(): Plugin {
         // 31. POST /api/evidence
         if (url === '/api/evidence' && req.method === 'POST') {
           const body = await readBody();
+          const target = targetsStore.find((t) => t.id === body.target_id);
+          if (!target) {
+            res.statusCode = 404;
+            return res.end(JSON.stringify({ error: { code: 'TARGET_NOT_FOUND', message: 'Target not found' } }));
+          }
+
+          let host = target.root_domain || 'example.com';
+          if (body.request?.url) {
+            try {
+              host = new URL(body.request.url).hostname;
+            } catch {
+              res.statusCode = 400;
+              return res.end(JSON.stringify({ error: { code: 'INVALID_URL', message: 'Malformed target URL' } }));
+            }
+            const isMatch = target.root_domain && (host === target.root_domain || host.endsWith('.' + target.root_domain));
+            if (!isMatch && target.allowed_domains && target.allowed_domains.length > 0) {
+              const allowed = target.allowed_domains.some((d: string) => {
+                if (d.startsWith('*.')) return host.endsWith(d.slice(1));
+                return host === d;
+              });
+              if (!allowed) {
+                res.statusCode = 403;
+                return res.end(JSON.stringify({ error: { code: 'TARGET_OUT_OF_SCOPE', message: `Host ${host} is outside authorized target boundaries.` } }));
+              }
+            }
+          }
+
+          const canonicalData = {
+            target_id: target.id,
+            asset_id: body.asset_id || '',
+            evidence_type: body.evidence_type || 'HTTP_RESPONSE',
+            status_code: Number(body.status_code) || 200,
+            summary: body.summary || '',
+            url: body.request?.url || '',
+            body_snippet: body.response?.body_snippet || '',
+          };
+          const canonicalStr = JSON.stringify(canonicalData);
+          const computedHash = crypto.createHash('sha256').update(canonicalStr).digest('hex');
+
           const newEv = {
             id: `ev-${Date.now().toString(36)}`,
-            target_id: body.target_id || 'tgt-alpha-001',
+            target_id: target.id,
             asset_id: body.asset_id || 'ast-01',
             source: body.source || 'MANUAL_PROBE',
             evidence_type: body.evidence_type || 'HTTP_RESPONSE',
             summary: body.summary || 'User-recorded security evidence item',
             captured_at: new Date().toISOString(),
-            status_code: body.status_code || 200,
+            status_code: Number(body.status_code) || 200,
             request: body.request,
             response: body.response,
             relevant_headers: body.relevant_headers,
-            scope_decision: body.scope_decision || {
+            scope_decision: {
               is_in_scope: true,
-              target_id: body.target_id || 'tgt-alpha-001',
-              evaluated_host: body.request?.url ? new URL(body.request.url).hostname : 'example.com',
-              rule_matched: '*.example.com',
-              reason: 'Manually recorded within program scope',
+              target_id: target.id,
+              evaluated_host: host,
+              rule_matched: `*.${target.root_domain}`,
+              reason: 'Manually recorded within validated program scope boundaries',
               evaluated_at: new Date().toISOString(),
             },
             redaction_status: body.redaction_status || {
@@ -2337,16 +2427,14 @@ function nexusApiPlugin(): Plugin {
               redacted_fields: ['Authorization', 'Cookie'],
               sanitized_at: new Date().toISOString(),
             },
-            canonical_representation: JSON.stringify({
-              asset_id: body.asset_id,
-              evidence_type: body.evidence_type,
-              target_id: body.target_id,
-            }),
-            sha256: `ev${Math.random().toString(16).substring(2, 10)}${Date.now().toString(16)}000000000000000000000000000000000000`.substring(0, 64),
+            canonical_representation: canonicalStr,
+            sha256: computedHash,
+            is_demo: true,
+            data_origin: 'DEMO_SYNTHETIC',
             provenance: body.provenance || {
               source: 'MANUAL_PROBE',
               operation_id: `op-rec-${Date.now().toString(36)}`,
-              target_id: body.target_id || 'tgt-alpha-001',
+              target_id: target.id,
               captured_at: new Date().toISOString(),
               initiator: 'user:security-analyst',
             },
@@ -2367,7 +2455,7 @@ function nexusApiPlugin(): Plugin {
           return res.end(JSON.stringify({ status: 'recorded', evidence: newEv }));
         }
 
-        // 32. GET /api/evidence/:id
+        // 32. GET /api/evidence/:id/integrity
         const evIntegMatch = url.match(/^\/api\/evidence\/([^\/?]+)\/integrity$/);
         if (evIntegMatch && req.method === 'GET') {
           const evId = evIntegMatch[1];
@@ -2376,14 +2464,26 @@ function nexusApiPlugin(): Plugin {
             res.statusCode = 404;
             return res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Evidence record not found' } }));
           }
+          const repr = ev.canonical_representation || JSON.stringify({
+            target_id: ev.target_id,
+            asset_id: ev.asset_id,
+            evidence_type: ev.evidence_type,
+            status_code: ev.status_code,
+            summary: ev.summary,
+            url: ev.request?.url,
+          });
+          const recomputed = crypto.createHash('sha256').update(repr).digest('hex');
+          const isTampered = ev.sha256 && ev.sha256 !== recomputed;
           res.statusCode = 200;
           return res.end(JSON.stringify({
             evidence_id: ev.id,
             original_sha256: ev.sha256,
-            computed_sha256: ev.sha256,
-            is_tampered: false,
+            computed_sha256: recomputed,
+            is_tampered: Boolean(isTampered),
+            canonical_matches: !isTampered,
             verified_at: new Date().toISOString(),
-            canonical_matches: true,
+            is_demo: true,
+            data_origin: 'DEMO_SYNTHETIC',
           }));
         }
 
@@ -2783,6 +2883,39 @@ function nexusApiPlugin(): Plugin {
               },
             }));
           }
+
+          // Phase 8.2R Epistemic Gate
+          if (body.status === 'SUPPORTED') {
+            if (hyp.missing_evidence && hyp.missing_evidence.length > 0) {
+              res.statusCode = 400;
+              return res.end(JSON.stringify({
+                error: {
+                  code: 'EVIDENCE_REQUIREMENTS_UNSATISFIED',
+                  message: `cannot transition to SUPPORTED: ${hyp.missing_evidence.length} missing evidence requirements remain unsatisfied`,
+                },
+              }));
+            }
+            if (!hyp.supporting_evidence || hyp.supporting_evidence.length === 0) {
+              res.statusCode = 400;
+              return res.end(JSON.stringify({
+                error: {
+                  code: 'NO_SUPPORTING_EVIDENCE',
+                  message: 'cannot transition to SUPPORTED without at least one verified supporting evidence record',
+                },
+              }));
+            }
+            const pendingFalsification = (hyp.falsification_conditions || []).some((c: any) => c.result === 'PENDING');
+            if (pendingFalsification) {
+              res.statusCode = 400;
+              return res.end(JSON.stringify({
+                error: {
+                  code: 'FALSIFICATION_CONDITIONS_PENDING',
+                  message: 'cannot transition to SUPPORTED while falsification conditions remain unevaluated',
+                },
+              }));
+            }
+          }
+
           hyp.status = body.status;
           hyp.updated_at = new Date().toISOString();
           res.statusCode = 200;
@@ -2968,26 +3101,29 @@ function nexusApiPlugin(): Plugin {
             return res.end(JSON.stringify(inv));
           }
 
-          pendingStep.status = 'COMPLETED';
+          pendingStep.status = 'SIMULATED';
+          pendingStep.is_simulated = true;
           pendingStep.executed_at = new Date().toISOString();
           const generatedEvId = `ev-inv-${Date.now().toString(36)}`;
           pendingStep.result_evidence_id = generatedEvId;
           inv.generated_evidence = inv.generated_evidence || [];
           inv.generated_evidence.push(generatedEvId);
 
-          // Add generated evidence to store
+          // Add simulated evidence to store
           evidenceStore.unshift({
             id: generatedEvId,
             target_id: inv.target_id,
             asset_id: inv.asset_id,
-            source: 'CONTROLLED_VALIDATION',
+            source: 'SECURITY_OBSERVATION',
             evidence_type: 'HTTP_REQUEST',
-            summary: `Automated baseline telemetry from investigation step: ${pendingStep.name}`,
+            summary: `[SIMULATED BASELINE] Sandbox model evaluation for step: ${pendingStep.name}`,
             captured_at: new Date().toISOString(),
             status_code: 200,
+            is_demo: true,
+            data_origin: 'DEMO_SYNTHETIC',
             request: {
               method: 'GET',
-              url: `https://target-${inv.target_id.slice(0, 8)}.internal/baseline`,
+              url: `https://target-${inv.target_id.slice(0, 8)}.example.com/baseline`,
               headers: { 'User-Agent': 'NexusHunter-InvestigationEngine/7.0' },
               body_length: 0,
               is_authenticated: false,
@@ -2995,18 +3131,18 @@ function nexusApiPlugin(): Plugin {
             response: {
               status_code: 200,
               headers: { 'Content-Type': 'application/json' },
-              body_snippet: '{"verified":true,"action_type":"' + pendingStep.action_type + '"}',
+              body_snippet: '{"simulated":true,"action_type":"' + pendingStep.action_type + '"}',
               body_length: 64,
-              body_hash: 'sha256-inv-verified',
+              body_hash: crypto.createHash('sha256').update('{"simulated":true}').digest('hex'),
               content_type: 'application/json',
               response_time_ms: 45,
             },
             scope_decision: {
               is_in_scope: true,
               target_id: inv.target_id,
-              evaluated_host: 'target.internal',
+              evaluated_host: 'example.com',
               rule_matched: 'STRICT_SCOPE_ALLOWLIST',
-              reason: 'Authorized investigation step probe',
+              reason: 'Simulated sandbox demonstration probe',
               evaluated_at: new Date().toISOString(),
             },
             redaction_status: {
@@ -3014,22 +3150,22 @@ function nexusApiPlugin(): Plugin {
               redacted_fields: [],
               sanitized_at: new Date().toISOString(),
             },
-            sha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+            sha256: crypto.createHash('sha256').update(generatedEvId).digest('hex'),
             provenance: {
-              source: 'CONTROLLED_VALIDATION',
+              source: 'SECURITY_OBSERVATION',
               operation_id: inv.id,
               target_id: inv.target_id,
               asset_id: inv.asset_id,
               captured_at: new Date().toISOString(),
-              initiator: 'InvestigationEngine',
+              initiator: 'InvestigationEngine:Sandbox',
             },
           });
 
-          // Check if all steps completed
-          const remainingPending = inv.steps?.some((s: any) => s.status === 'PENDING');
-          if (!remainingPending) {
-            inv.status = 'COMPLETED';
-            inv.falsification_result = 'CONFIRMED_VIOLATION';
+          // Check if all steps are now processed
+          const anyPending = inv.steps?.some((s: any) => s.status === 'PENDING');
+          if (!anyPending) {
+            inv.status = 'SIMULATED';
+            inv.result_summary = `Sandbox evaluation finished: ${inv.steps?.length || 0} simulated steps completed.`;
           }
           inv.updated_at = new Date().toISOString();
           res.statusCode = 200;
@@ -3146,6 +3282,52 @@ function nexusApiPlugin(): Plugin {
           return res.end(JSON.stringify(resPayload));
         }
 
+        // 68. GET /api/investigation-plans/:id
+        const planGetMatch = url.match(/^\/api\/investigation-plans\/([^\/?]+)$/);
+        if (planGetMatch && req.method === 'GET') {
+          const planId = planGetMatch[1];
+          const plan = investigationPlansStore.find((p) => p.id === planId);
+          if (!plan) {
+            res.statusCode = 404;
+            return res.end(JSON.stringify({ error: 'plan not found' }));
+          }
+          res.statusCode = 200;
+          return res.end(JSON.stringify(plan));
+        }
+
+        // 69. POST /api/investigation-plans/:id/approve-step
+        const planApproveMatch = url.match(/^\/api\/investigation-plans\/([^\/?]+)\/approve-step$/);
+        if (planApproveMatch && req.method === 'POST') {
+          const planId = planApproveMatch[1];
+          const body = await readBody();
+          const stepNum = Number(body.step_number);
+          const plan = investigationPlansStore.find((p) => p.id === planId);
+          if (!plan) {
+            res.statusCode = 404;
+            return res.end(JSON.stringify({ error: 'plan not found' }));
+          }
+          if (plan.status === 'RUNNING' || plan.status === 'CANCELLED' || plan.status === 'COMPLETED' || plan.status === 'FAILED') {
+            res.statusCode = 400;
+            return res.end(JSON.stringify({ error: `cannot approve step: plan is already in status ${plan.status}` }));
+          }
+          const step = (plan.steps || []).find((s: any) => s.step_number === stepNum);
+          if (!step) {
+            res.statusCode = 404;
+            return res.end(JSON.stringify({ error: `step ${stepNum} not found in plan` }));
+          }
+          if (step.status === 'APPROVED' || step.status === 'RUNNING' || step.status === 'COMPLETED') {
+            res.statusCode = 400;
+            return res.end(JSON.stringify({ error: `step ${stepNum} is already ${step.status}` }));
+          }
+          const nowStr = new Date().toISOString();
+          step.approved_by_human = true;
+          step.approved_at = nowStr;
+          step.status = 'APPROVED';
+          plan.status = 'APPROVED';
+          plan.updated_at = nowStr;
+          res.statusCode = 200;
+          return res.end(JSON.stringify(plan));
+        }
 
         next();
       });
