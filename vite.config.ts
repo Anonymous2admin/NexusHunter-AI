@@ -1591,6 +1591,169 @@ const authContextsStore: any[] = [
   },
 ];
 
+const scopeImportsStore: any[] = [
+  {
+    id: 'simp-01',
+    file_name: 'hackerone_target_scope.json',
+    status: 'CONFIRMED',
+    selected_root_domain: 'example.com',
+    rules_discovered: 14,
+    include_hosts_count: 8,
+    exclude_hosts_count: 2,
+    regex_rules_count: 4,
+    path_rules_count: 3,
+    warnings_count: 1,
+    ambiguous_count: 0,
+    original_file_sha256: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
+    canonical_scope_sha256: '5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8',
+    normalization_manifest_sha256: '4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a',
+    root_domains: [
+      {
+        id: 'rd-01',
+        normalized_domain: 'example.com',
+        source_file: 'hackerone_target_scope.json',
+        source_path: 'targets[0].asset_identifier',
+        evidence: 'explicit root domain declaration',
+        confidence: 'HIGH',
+        status: 'SELECTED',
+      },
+    ],
+    normalizations: [
+      {
+        original: 'HTTPS://*.EXAMPLE.COM:443/',
+        normalized: '*.example.com',
+        field: 'host',
+        reason: 'Lowercased domain and stripped redundant default HTTPS port 443',
+        severity: 'INFO',
+      },
+    ],
+    target_id: 'tgt-alpha-001',
+    created_at: new Date(Date.now() - 86400000).toISOString(),
+    confirmed_at: new Date(Date.now() - 86000000).toISOString(),
+  },
+];
+
+const jsAssetsStore: any[] = [
+  {
+    id: 'js-01',
+    target_id: 'tgt-alpha-001',
+    asset_id: 'ast-02',
+    url: 'https://api.example.com/static/js/bundle.main.8f4b2.js',
+    parent_url: 'https://api.example.com/v1/auth/login',
+    discovered_at: new Date(Date.now() - 7200000).toISOString(),
+    scope_decision: { in_scope: true, reason: 'Domain api.example.com matches primary authorized scope rule' },
+    content_sha256: 'a1b2c3d4e5f67890123456789abcdef0123456789abcdef0123456789abcdef0',
+    byte_size: 284120,
+    is_third_party: false,
+    fetch_status: 'FETCHED',
+    line_count: 14,
+    created_at: new Date(Date.now() - 7200000).toISOString(),
+  },
+  {
+    id: 'js-02',
+    target_id: 'tgt-alpha-001',
+    asset_id: 'ast-02',
+    url: 'https://api.example.com/static/js/vendor.chunk.js',
+    parent_url: 'https://api.example.com/v1/auth/login',
+    discovered_at: new Date(Date.now() - 7200000).toISOString(),
+    scope_decision: { in_scope: true, reason: 'Domain api.example.com matches primary authorized scope rule' },
+    content_sha256: 'f0e1d2c3b4a59687123456789abcdef0123456789abcdef0123456789abcdef0',
+    byte_size: 451920,
+    is_third_party: false,
+    fetch_status: 'FETCHED',
+    line_count: 42,
+    created_at: new Date(Date.now() - 7200000).toISOString(),
+  },
+];
+
+const jsReferencesStore: any[] = [
+  {
+    id: 'jsr-01',
+    target_id: 'tgt-alpha-001',
+    asset_id: 'ast-02',
+    js_asset_id: 'js-01',
+    source_url: 'https://api.example.com/static/js/bundle.main.8f4b2.js',
+    category: 'API_ROUTE',
+    extracted_value: '/api/v1/admin/export-diagnostics',
+    normalized_value: '/api/v1/admin/export-diagnostics',
+    line_number: 8,
+    byte_offset: 14205,
+    source_fragment: 'const DIAGNOSTICS_ENDPOINT = "/api/v1/admin/export-diagnostics"',
+    scope_status: 'IN_SCOPE',
+    confidence: 'HIGH',
+    provenance_sha: '7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c',
+    created_at: new Date(Date.now() - 7100000).toISOString(),
+  },
+  {
+    id: 'jsr-02',
+    target_id: 'tgt-alpha-001',
+    asset_id: 'ast-02',
+    js_asset_id: 'js-01',
+    source_url: 'https://api.example.com/static/js/bundle.main.8f4b2.js',
+    category: 'CLOUD_REFERENCE',
+    extracted_value: 'https://example-corp-assets-prod.s3.amazonaws.com',
+    normalized_value: 's3://example-corp-assets-prod',
+    line_number: 12,
+    byte_offset: 28410,
+    source_fragment: 'storageBucket: "https://example-corp-assets-prod.s3.amazonaws.com"',
+    scope_status: 'IN_SCOPE',
+    confidence: 'HIGH',
+    provenance_sha: '1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b',
+    created_at: new Date(Date.now() - 7100000).toISOString(),
+  },
+];
+
+const jsSecretsStore: any[] = [
+  {
+    id: 'jss-01',
+    target_id: 'tgt-alpha-001',
+    asset_id: 'ast-02',
+    js_asset_id: 'js-01',
+    secret_type: 'AWS_ACCESS_KEY',
+    location: 'bundle.main.8f4b2.js line 12, col 45',
+    masked_preview: 'AKIA************3Q9A',
+    sha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+    confidence: 'HIGH',
+    source_js_asset: 'https://api.example.com/static/js/bundle.main.8f4b2.js',
+    created_at: new Date(Date.now() - 7100000).toISOString(),
+  },
+];
+
+const cloudReferencesStore: any[] = [
+  {
+    id: 'cloud-01',
+    target_id: 'tgt-alpha-001',
+    asset_id: 'ast-02',
+    provider: 'AWS',
+    resource_type: 'S3_BUCKET',
+    raw_reference: 'https://example-corp-assets-prod.s3.amazonaws.com',
+    normalized_target: 'example-corp-assets-prod',
+    source_origin: 'JS_ASSET',
+    source_location: 'bundle.main.8f4b2.js:12',
+    scope_status: 'IN_SCOPE',
+    validation_status: 'SAFE_PROBED',
+    status_code: 403,
+    public_accessible: false,
+    created_at: new Date(Date.now() - 7100000).toISOString(),
+  },
+  {
+    id: 'cloud-02',
+    target_id: 'tgt-alpha-001',
+    asset_id: 'ast-02',
+    provider: 'CLOUDFLARE',
+    resource_type: 'CLOUDFRONT',
+    raw_reference: 'https://assets-origin.example.com.cdn.cloudflare.net',
+    normalized_target: 'assets-origin.example.com',
+    source_origin: 'DNS_RECORD',
+    source_location: 'CNAME: assets.example.com',
+    scope_status: 'IN_SCOPE',
+    validation_status: 'SAFE_PROBED',
+    status_code: 200,
+    public_accessible: true,
+    created_at: new Date(Date.now() - 7000000).toISOString(),
+  },
+];
+
 function nexusApiPlugin(): Plugin {
   return {
     name: 'nexus-api-plugin',
@@ -3327,6 +3490,214 @@ function nexusApiPlugin(): Plugin {
           plan.updated_at = nowStr;
           res.statusCode = 200;
           return res.end(JSON.stringify(plan));
+        }
+
+        // 70. GET /api/investigation-plans
+        if (url.startsWith('/api/investigation-plans') && req.method === 'GET') {
+          const parsedUrl = new URL(url, 'http://localhost');
+          const targetId = parsedUrl.searchParams.get('target_id');
+          const list = targetId ? investigationPlansStore.filter((p) => p.target_id === targetId) : investigationPlansStore;
+          res.statusCode = 200;
+          return res.end(JSON.stringify(list));
+        }
+
+        // 71. POST /api/investigation-plans/generate
+        if (url === '/api/investigation-plans/generate' && req.method === 'POST') {
+          const body = await readBody();
+          const targetId = body.target_id || 'tgt-alpha-001';
+          const newPlan = {
+            id: `plan-${Date.now().toString(36)}`,
+            target_id: targetId,
+            asset_id: 'ast-02',
+            hypothesis_id: body.hypothesis_id || 'hyp-01',
+            title: `Investigation Plan: Target Scope Validation #${investigationPlansStore.length + 1}`,
+            reason: 'Generated via structured falsification planner.',
+            hypothesis: 'Deviating header policy may expose internal routing topology.',
+            why_interesting: {
+              observed_facts: ['CORS wildcard header * observed', 'Authentication bypass on token endpoint'],
+              deduction: 'Potential privilege boundary breakdown',
+              missing_evidence: ['Non-destructive probe of /api/v1/user'],
+            },
+            required_evidence: ['HTTP response status for anonymous probe'],
+            evidence_required_count: 2,
+            evidence_satisfied_count: 1,
+            safe_validation: 'Safe read-only HTTP GET probe to non-state-changing health/version route',
+            expected_observation: 'HTTP 401/403 with standard JSON error',
+            alternative_explanation: 'Intended public token issuance',
+            stop_condition: 'Abort if any rate-limit or 429 response occurs',
+            scope_requirements: ['In-scope root domain', 'Safe method only'],
+            risk: 'LOW',
+            confidence: 'HIGH',
+            epistemic_status: 'HYPOTHESIZED',
+            status: 'PLANNED',
+            steps: [
+              {
+                step_number: 1,
+                action_type: 'FETCH_URL',
+                description: 'Fetch public JWKS and inspect signature status',
+                target_url: 'https://example.com/.well-known/jwks.json',
+                status: 'PENDING',
+                approved_by_human: false,
+              },
+              {
+                step_number: 2,
+                action_type: 'INSPECT_HEADERS',
+                description: 'Audit response headers for CORS access-control-allow-origin',
+                target_url: 'https://example.com/v1/auth/token',
+                status: 'PENDING',
+                approved_by_human: false,
+              },
+            ],
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
+          investigationPlansStore.unshift(newPlan);
+          res.statusCode = 201;
+          return res.end(JSON.stringify(newPlan));
+        }
+
+        // 72. GET /api/scope/imports
+        if (url === '/api/scope/imports' && req.method === 'GET') {
+          res.statusCode = 200;
+          return res.end(JSON.stringify(scopeImportsStore));
+        }
+
+        // 73. POST /api/scope/import
+        if (url.startsWith('/api/scope/import') && req.method === 'POST') {
+          const body = await readBody();
+          const parsedUrl = new URL(url, 'http://localhost');
+          const fileName = parsedUrl.searchParams.get('file_name') || 'scope_import.json';
+          const review = {
+            id: `simp-${Date.now().toString(36)}`,
+            file_name: fileName,
+            status: 'PENDING_CONFIRMATION',
+            selected_root_domain: 'example.com',
+            rules_discovered: 8,
+            include_hosts_count: 5,
+            exclude_hosts_count: 1,
+            regex_rules_count: 2,
+            path_rules_count: 2,
+            warnings_count: 0,
+            ambiguous_count: 0,
+            original_file_sha256: 'a1b2c3d4e5f67890123456789abcdef0123456789abcdef0123456789abcdef0',
+            canonical_scope_sha256: 'f0e1d2c3b4a59687123456789abcdef0123456789abcdef0123456789abcdef0',
+            normalization_manifest_sha256: 'c3d4e5f67890123456789abcdef0123456789abcdef0123456789abcdef0a1b2',
+            root_domains: [
+              {
+                id: 'rd-01',
+                normalized_domain: 'example.com',
+                source_file: fileName,
+                source_path: 'targets[0]',
+                evidence: 'Extracted primary domain candidate',
+                confidence: 'HIGH',
+                status: 'SELECTED',
+              },
+            ],
+            normalizations: [
+              {
+                original: 'http://example.com:80',
+                normalized: 'example.com',
+                field: 'host',
+                reason: 'Stripped redundant default HTTP port 80',
+                severity: 'INFO',
+              },
+            ],
+            created_at: new Date().toISOString(),
+          };
+          scopeImportsStore.unshift(review);
+          res.statusCode = 201;
+          return res.end(JSON.stringify(review));
+        }
+
+        // 74. POST /api/scope/imports/:id/confirm
+        const confirmMatch = url.match(/^\/api\/scope\/imports\/([^\/?]+)\/confirm$/);
+        if (confirmMatch && req.method === 'POST') {
+          const id = confirmMatch[1];
+          const body = await readBody();
+          const review = scopeImportsStore.find((r) => r.id === id);
+          if (!review) {
+            res.statusCode = 404;
+            return res.end(JSON.stringify({ error: 'scope review not found' }));
+          }
+          review.status = 'CONFIRMED';
+          review.confirmed_at = new Date().toISOString();
+          review.selected_root_domain = body.selected_root_domain || review.selected_root_domain || 'example.com';
+          res.statusCode = 200;
+          return res.end(JSON.stringify(review));
+        }
+
+        // 75. GET /api/targets/:id/js-assets
+        const jsAssetsMatch = url.match(/^\/api\/targets\/([^\/?]+)\/js-assets$/);
+        if (jsAssetsMatch && req.method === 'GET') {
+          const targetId = jsAssetsMatch[1];
+          const list = jsAssetsStore.filter((a) => a.target_id === targetId || targetId === 'tgt-alpha-001');
+          res.statusCode = 200;
+          return res.end(JSON.stringify(list));
+        }
+
+        // 76. GET /api/targets/:id/js-references
+        const jsRefsMatch = url.match(/^\/api\/targets\/([^\/?]+)\/js-references$/);
+        if (jsRefsMatch && req.method === 'GET') {
+          const targetId = jsRefsMatch[1];
+          const list = jsReferencesStore.filter((r) => r.target_id === targetId || targetId === 'tgt-alpha-001');
+          res.statusCode = 200;
+          return res.end(JSON.stringify(list));
+        }
+
+        // 77. GET /api/targets/:id/js-secrets
+        const jsSecretsMatch = url.match(/^\/api\/targets\/([^\/?]+)\/js-secrets$/);
+        if (jsSecretsMatch && req.method === 'GET') {
+          const targetId = jsSecretsMatch[1];
+          const list = jsSecretsStore.filter((s) => s.target_id === targetId || targetId === 'tgt-alpha-001');
+          res.statusCode = 200;
+          return res.end(JSON.stringify(list));
+        }
+
+        // 78. POST /api/targets/:id/js-analyze
+        const jsAnalyzeMatch = url.match(/^\/api\/targets\/([^\/?]+)\/js-analyze$/);
+        if (jsAnalyzeMatch && req.method === 'POST') {
+          const targetId = jsAnalyzeMatch[1];
+          const body = await readBody();
+          const newAsset = {
+            id: `js-${Date.now().toString(36)}`,
+            target_id: targetId,
+            asset_id: body.asset_id || 'ast-02',
+            url: body.script_url || 'https://api.example.com/static/js/dynamic.js',
+            parent_url: 'https://api.example.com/',
+            discovered_at: new Date().toISOString(),
+            scope_decision: { in_scope: true, reason: 'Target domain matches explicit inclusion rules' },
+            content_sha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+            byte_size: 104200,
+            is_third_party: false,
+            fetch_status: 'FETCHED',
+            line_count: 24,
+            created_at: new Date().toISOString(),
+          };
+          jsAssetsStore.unshift(newAsset);
+          res.statusCode = 200;
+          return res.end(JSON.stringify({ status: 'SUCCESS', asset: newAsset }));
+        }
+
+        // 79. GET /api/targets/:id/cloud-references
+        const cloudRefsMatch = url.match(/^\/api\/targets\/([^\/?]+)\/cloud-references$/);
+        if (cloudRefsMatch && req.method === 'GET') {
+          const targetId = cloudRefsMatch[1];
+          const list = cloudReferencesStore.filter((c) => c.target_id === targetId || targetId === 'tgt-alpha-001');
+          res.statusCode = 200;
+          return res.end(JSON.stringify(list));
+        }
+
+        // 80. POST /api/cloud-references/validate
+        if (url === '/api/cloud-references/validate' && req.method === 'POST') {
+          const body = await readBody();
+          const ref = cloudReferencesStore.find((c) => c.id === body.cloud_reference_id);
+          if (ref) {
+            ref.validation_status = 'SAFE_PROBED';
+            ref.status_code = 403;
+            ref.public_accessible = false;
+          }
+          res.statusCode = 200;
+          return res.end(JSON.stringify({ status: 'VALIDATED', reference: ref }));
         }
 
         next();

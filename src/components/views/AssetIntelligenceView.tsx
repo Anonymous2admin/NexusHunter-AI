@@ -38,6 +38,7 @@ import {
   PageAsset,
 } from '../../types';
 import { api } from '../../lib/api';
+import { useRuntime } from '../../context/RuntimeContext';
 import { StatusBadge } from '../StatusBadge';
 import { MetricCard } from '../MetricCard';
 
@@ -54,6 +55,7 @@ export const AssetIntelligenceView: React.FC<AssetIntelligenceViewProps> = ({
   selectedTargetId: initialTargetId,
   onSelectTarget,
 }) => {
+  const { mode, assertLiveOrThrow, showRuntimeError } = useRuntime();
   const [currentTargetId, setCurrentTargetId] = useState<string>(
     initialTargetId || targets[0]?.id || ''
   );
@@ -153,6 +155,7 @@ export const AssetIntelligenceView: React.FC<AssetIntelligenceViewProps> = ({
     if (!newTagInput.assetId || !newTagInput.tag.trim()) return;
     setIsAddingTag(true);
     try {
+      assertLiveOrThrow('add asset tag');
       const added = await api.addAssetTag(newTagInput.assetId, currentTargetId, newTagInput.tag.trim());
       if (intelSummary) {
         setIntelSummary({
@@ -162,7 +165,8 @@ export const AssetIntelligenceView: React.FC<AssetIntelligenceViewProps> = ({
       }
       setNewTagInput({ assetId: '', tag: '' });
     } catch (err: any) {
-      alert(`Error adding tag: ${err.message}`);
+      showRuntimeError(err);
+      setError(err.message || 'Error adding tag');
     } finally {
       setIsAddingTag(false);
     }
@@ -171,6 +175,7 @@ export const AssetIntelligenceView: React.FC<AssetIntelligenceViewProps> = ({
   // Handle Tag Deletion
   const handleDeleteTag = async (assetId: string, tagName: string) => {
     try {
+      assertLiveOrThrow('delete asset tag');
       await api.deleteAssetTag(assetId, tagName);
       if (intelSummary) {
         setIntelSummary({
@@ -181,7 +186,8 @@ export const AssetIntelligenceView: React.FC<AssetIntelligenceViewProps> = ({
         });
       }
     } catch (err: any) {
-      alert(`Error removing tag: ${err.message}`);
+      showRuntimeError(err);
+      setError(err.message || 'Error removing tag');
     }
   };
 

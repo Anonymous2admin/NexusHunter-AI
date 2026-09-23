@@ -11,6 +11,7 @@ import {
   Evidence,
 } from '../../types';
 import { api, ApiError } from '../../lib/api';
+import { useRuntime } from '../../context/RuntimeContext';
 import {
   Brain,
   Sparkles,
@@ -52,6 +53,7 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
   selectedTargetId,
   onSelectTarget,
 }) => {
+  const { mode, assertLiveOrThrow, showRuntimeError } = useRuntime();
   const [activeTab, setActiveTab] = useState<ReasoningTab>('hypotheses');
   const [targetId, setTargetId] = useState<string>(selectedTargetId || targets[0]?.id || '');
 
@@ -128,10 +130,12 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
     setError(null);
     setSuccessMessage(null);
     try {
+      assertLiveOrThrow('trigger reasoning cycle');
       const res = await api.triggerReasoningCycle(targetId);
       setSuccessMessage(`Reasoning cycle completed: evaluated ${res.input_count || 0} observations, generated ${res.signals_count || 0} signals and ${res.hypotheses_count || 0} hypotheses in ${res.duration_ms || 0}ms.`);
       await loadReasoningData(targetId);
     } catch (err: any) {
+      showRuntimeError(err);
       setError(err.message || 'Failed to execute reasoning cycle.');
     } finally {
       setIsCycling(false);
@@ -140,17 +144,20 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
 
   const handlePlanInvestigation = async (hypId: string) => {
     try {
+      assertLiveOrThrow('plan investigation');
       const inv = await api.planInvestigation(hypId);
       setSuccessMessage(`Safe investigation plan created: ${inv.title}`);
       await loadReasoningData(targetId);
       setActiveTab('investigations');
     } catch (err: any) {
+      showRuntimeError(err);
       setError(err.message || 'Failed to create investigation plan.');
     }
   };
 
   const handleUpdateHypothesisStatus = async (hypId: string, nextStatus: any) => {
     try {
+      assertLiveOrThrow('update hypothesis status');
       setError(null);
       await api.updateHypothesisStatus(hypId, nextStatus);
       setSuccessMessage(`Hypothesis transitioned to ${nextStatus}.`);
@@ -159,38 +166,45 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
         setSelectedHypothesis((prev) => (prev ? { ...prev, status: nextStatus } : null));
       }
     } catch (err: any) {
+      showRuntimeError(err);
       setError(err.message || 'State transition rejected.');
     }
   };
 
   const handleUpdateSignalStatus = async (sigId: string, nextStatus: any) => {
     try {
+      assertLiveOrThrow('update signal status');
       setError(null);
       await api.updateSignalStatus(sigId, nextStatus);
       setSuccessMessage(`Signal transitioned to ${nextStatus}.`);
       await loadReasoningData(targetId);
     } catch (err: any) {
+      showRuntimeError(err);
       setError(err.message || 'Signal state transition rejected.');
     }
   };
 
   const handleCancelInvestigation = async (invId: string) => {
     try {
+      assertLiveOrThrow('cancel investigation');
       setError(null);
       await api.cancelInvestigation(invId);
       setSuccessMessage(`Investigation cancelled safely.`);
       await loadReasoningData(targetId);
     } catch (err: any) {
+      showRuntimeError(err);
       setError(err.message || 'Failed to cancel investigation.');
     }
   };
 
   const handleExecuteInvestigationStep = async (invId: string) => {
     try {
+      assertLiveOrThrow('execute investigation step');
       const updated = await api.executeInvestigationStep(invId);
       setSuccessMessage(`Executed investigation step. Status: ${updated.status}`);
       await loadReasoningData(targetId);
     } catch (err: any) {
+      showRuntimeError(err);
       setError(err.message || 'Failed to advance investigation step.');
     }
   };
@@ -213,6 +227,7 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
     setIsAiLoading(true);
     setError(null);
     try {
+      assertLiveOrThrow('execute ai-assisted reasoning');
       // Collect valid evidence IDs from active hypotheses
       const sampleEvidenceIds = hypotheses.flatMap((h) => h.supporting_evidence).slice(0, 3);
       const res = await api.aiAssistedReasoning(
@@ -223,6 +238,7 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
       );
       setAiResult(res);
     } catch (err: any) {
+      showRuntimeError(err);
       setError(err.message || 'AI Reasoning assist failed.');
     } finally {
       setIsAiLoading(false);

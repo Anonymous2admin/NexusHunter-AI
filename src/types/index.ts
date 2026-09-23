@@ -1036,6 +1036,179 @@ export interface DataResponse<T> {
   timestamp?: string;
 }
 
+// ==========================================
+// Phase 8: Scope Intelligence & Asset Inspection
+// ==========================================
+
+export interface ScopeNormalization {
+  original: string;
+  normalized: string;
+  field: string;
+  reason: string;
+  severity: 'INFO' | 'WARNING' | 'CRITICAL';
+}
+
+export interface RootDomainCandidate {
+  id: string;
+  normalized_domain: string;
+  source_file: string;
+  source_path: string;
+  source_rule_id?: string;
+  evidence: string;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  status: 'DISCOVERED' | 'SELECTED' | 'REJECTED' | 'AMBIGUOUS';
+}
+
+export interface CanonicalScope {
+  primary_root_domain: string;
+  root_domains: string[];
+  include_hosts: any[];
+  exclude_hosts: any[];
+  include_urls: any[];
+  exclude_urls: any[];
+  path_rules: any[];
+  source_files: any[];
+  normalizations: ScopeNormalization[];
+}
+
+export interface ScopeImportReview {
+  id: string;
+  file_name: string;
+  status: 'PENDING_CONFIRMATION' | 'CONFIRMED' | 'REJECTED';
+  root_domains: RootDomainCandidate[];
+  selected_root_domain: string;
+  rules_discovered: number;
+  include_hosts_count: number;
+  exclude_hosts_count: number;
+  regex_rules_count: number;
+  path_rules_count: number;
+  warnings_count: number;
+  ambiguous_count: number;
+  normalizations: ScopeNormalization[];
+  canonical_scope?: CanonicalScope;
+  original_file_sha256: string;
+  canonical_scope_sha256: string;
+  normalization_manifest_sha256: string;
+  selection_reason?: string;
+  target_id?: string;
+  created_at: string;
+  confirmed_at?: string;
+}
+
+export interface JSAsset {
+  id: string;
+  target_id: string;
+  asset_id: string;
+  url: string;
+  parent_url: string;
+  discovered_at: string;
+  scope_decision: {
+    in_scope: boolean;
+    reason: string;
+  };
+  content_sha256: string;
+  byte_size: number;
+  is_third_party: boolean;
+  fetch_status: 'FETCHED' | 'SKIPPED_OUT_OF_SCOPE' | 'FAILED' | 'SIZE_EXCEEDED';
+  line_count: number;
+  created_at: string;
+}
+
+export interface JSReference {
+  id: string;
+  target_id: string;
+  asset_id: string;
+  js_asset_id: string;
+  source_url: string;
+  category: 'API_ROUTE' | 'URL' | 'CLOUD_REFERENCE' | 'TECH_REFERENCE' | 'CONFIG_REFERENCE' | 'SECRET_INDICATOR';
+  extracted_value: string;
+  normalized_value: string;
+  line_number?: number;
+  byte_offset?: number;
+  source_fragment?: string;
+  scope_status: 'IN_SCOPE' | 'OUT_OF_SCOPE' | 'UNKNOWN';
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  evidence_id?: string;
+  provenance_sha: string;
+  created_at: string;
+}
+
+export interface JSSecretIndicator {
+  id: string;
+  target_id: string;
+  asset_id: string;
+  js_asset_id: string;
+  secret_type: string;
+  location: string;
+  masked_preview: string;
+  sha256: string;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  source_js_asset: string;
+  evidence_id?: string;
+  created_at: string;
+}
+
+export interface CloudReference {
+  id: string;
+  target_id: string;
+  asset_id?: string;
+  provider: 'AWS' | 'AZURE' | 'GCP' | 'CLOUDFLARE' | 'DIGITALOCEAN' | 'OTHER';
+  resource_type: 'S3_BUCKET' | 'BLOB_CONTAINER' | 'GCS_BUCKET' | 'CLOUDFRONT' | 'UNKNOWN';
+  raw_reference: string;
+  normalized_target: string;
+  source_origin: string;
+  source_location: string;
+  scope_status: 'IN_SCOPE' | 'OUT_OF_SCOPE' | 'UNKNOWN';
+  validation_status: 'UNCHECKED' | 'SAFE_PROBED' | 'VERIFIED_PUBLIC' | 'VERIFIED_PRIVATE' | 'UNAUTHORIZED';
+  status_code?: number;
+  public_accessible: boolean;
+  evidence_id?: string;
+  created_at: string;
+}
+
+export interface InvestigationPlanStep {
+  step_number: number;
+  action_type: string;
+  description: string;
+  target_url: string;
+  status: 'PENDING' | 'APPROVED' | 'EXECUTED' | 'BLOCKED' | 'SKIPPED';
+  approved_by_human: boolean;
+  approved_at?: string;
+  result_evidence_id?: string;
+  result_observation?: string;
+}
+
+export interface InvestigationPlan {
+  id: string;
+  target_id: string;
+  asset_id?: string;
+  hypothesis_id?: string;
+  title: string;
+  reason: string;
+  hypothesis: string;
+  why_interesting?: {
+    observed_facts: string[];
+    deduction: string;
+    missing_evidence: string[];
+  };
+  required_evidence?: string[];
+  evidence_required_count: number;
+  evidence_satisfied_count: number;
+  safe_validation: string;
+  expected_observation: string;
+  alternative_explanation: string;
+  stop_condition: string;
+  scope_requirements?: string[];
+  risk: 'LOW' | 'MEDIUM' | 'HIGH';
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  epistemic_status: string;
+  status: 'PLANNED' | 'APPROVED' | 'RUNNING' | 'COMPLETED' | 'DISMISSED';
+  source_evidence_ids?: string[];
+  steps: InvestigationPlanStep[];
+  created_at: string;
+  updated_at?: string;
+}
+
 
 
 

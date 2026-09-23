@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Target } from '../../types';
+import { useRuntime } from '../../context/RuntimeContext';
 import { StatusBadge } from '../StatusBadge';
 import { DataTable, Column } from '../DataTable';
 import { EmptyState } from '../EmptyState';
@@ -26,6 +27,7 @@ export const TargetsView: React.FC<TargetsViewProps> = ({
   onSelectTargetForVerify,
   onSelectTargetForIntel,
 }) => {
+  const { mode, assertLiveOrThrow, showRuntimeError } = useRuntime();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedTarget, setSelectedTarget] = useState<Target | null>(null);
 
@@ -59,6 +61,7 @@ export const TargetsView: React.FC<TargetsViewProps> = ({
 
     setIsSubmitting(true);
     try {
+      assertLiveOrThrow('register target program');
       await onCreateTarget({
         name: name.trim(),
         root_domain: rootDomain.trim(),
@@ -75,6 +78,7 @@ export const TargetsView: React.FC<TargetsViewProps> = ({
       setExcludedPatterns('');
       setIsModalOpen(false);
     } catch (err: any) {
+      showRuntimeError(err);
       setFormError(err.message || 'Failed to register target.');
     } finally {
       setIsSubmitting(false);
@@ -141,10 +145,15 @@ export const TargetsView: React.FC<TargetsViewProps> = ({
           )}
           <button
             type="button"
-            onClick={(e) => {
+            onClick={async (e) => {
               e.stopPropagation();
               if (confirm(`Delete authorized target '${t.name}'? All attributable scan history will remain.`)) {
-                onDeleteTarget(t.id);
+                try {
+                  assertLiveOrThrow('delete target');
+                  await onDeleteTarget(t.id);
+                } catch (err: any) {
+                  showRuntimeError(err);
+                }
               }
             }}
             className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 transition-colors"

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ScanJob, Target } from '../../types';
+import { useRuntime } from '../../context/RuntimeContext';
 import { StatusBadge } from '../StatusBadge';
 import { DataTable, Column } from '../DataTable';
 import { EmptyState } from '../EmptyState';
@@ -34,6 +35,7 @@ export const ScansView: React.FC<ScansViewProps> = ({
   onFailJob,
   onCancelJob,
 }) => {
+  const { mode, assertLiveOrThrow, showRuntimeError } = useRuntime();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedTargetId, setSelectedTargetId] = useState('');
   const [jobType, setJobType] = useState('HIGH_SPEED_RECON');
@@ -61,6 +63,7 @@ export const ScansView: React.FC<ScansViewProps> = ({
 
     setIsSubmitting(true);
     try {
+      assertLiveOrThrow('create scan job');
       await onCreateJob({
         target_id: selectedTargetId,
         type: jobType,
@@ -72,6 +75,8 @@ export const ScansView: React.FC<ScansViewProps> = ({
         },
       });
       setIsModalOpen(false);
+    } catch (err: any) {
+      showRuntimeError(err);
     } finally {
       setIsSubmitting(false);
     }
@@ -112,9 +117,14 @@ export const ScansView: React.FC<ScansViewProps> = ({
           {j.status === 'QUEUED' && onStartJob && (
             <button
               type="button"
-              onClick={(e) => {
+              onClick={async (e) => {
                 e.stopPropagation();
-                onStartJob(j.id);
+                try {
+                  assertLiveOrThrow('start scan job');
+                  await onStartJob(j.id);
+                } catch (err: any) {
+                  showRuntimeError(err);
+                }
               }}
               className="inline-flex items-center gap-1 px-2 py-1 rounded bg-sky-950 text-sky-400 border border-sky-800 hover:bg-sky-900"
             >
@@ -127,9 +137,14 @@ export const ScansView: React.FC<ScansViewProps> = ({
               {onCompleteJob && (
                 <button
                   type="button"
-                  onClick={(e) => {
+                  onClick={async (e) => {
                     e.stopPropagation();
-                    onCompleteJob(j.id);
+                    try {
+                      assertLiveOrThrow('complete scan job');
+                      await onCompleteJob(j.id);
+                    } catch (err: any) {
+                      showRuntimeError(err);
+                    }
                   }}
                   className="inline-flex items-center gap-1 px-2 py-1 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 hover:bg-emerald-900"
                 >
@@ -139,10 +154,17 @@ export const ScansView: React.FC<ScansViewProps> = ({
               {onFailJob && (
                 <button
                   type="button"
-                  onClick={(e) => {
+                  onClick={async (e) => {
                     e.stopPropagation();
                     const reason = prompt('Enter failure reason:', 'Handshake timeout');
-                    if (reason) onFailJob(j.id, reason);
+                    if (reason) {
+                      try {
+                        assertLiveOrThrow('fail scan job');
+                        await onFailJob(j.id, reason);
+                      } catch (err: any) {
+                        showRuntimeError(err);
+                      }
+                    }
                   }}
                   className="inline-flex items-center gap-1 px-2 py-1 rounded bg-rose-950 text-rose-400 border border-rose-800 hover:bg-rose-900"
                 >
@@ -155,9 +177,14 @@ export const ScansView: React.FC<ScansViewProps> = ({
           {(j.status === 'QUEUED' || j.status === 'RUNNING') && onCancelJob && (
             <button
               type="button"
-              onClick={(e) => {
+              onClick={async (e) => {
                 e.stopPropagation();
-                onCancelJob(j.id);
+                try {
+                  assertLiveOrThrow('cancel scan job');
+                  await onCancelJob(j.id);
+                } catch (err: any) {
+                  showRuntimeError(err);
+                }
               }}
               className="px-2 py-1 rounded bg-slate-800 text-slate-400 hover:bg-slate-700"
             >

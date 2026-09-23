@@ -39,6 +39,7 @@ import {
   EvidenceIntegrityResult,
 } from '../../types';
 import { api } from '../../lib/api';
+import { useRuntime } from '../../context/RuntimeContext';
 import { MetricCard } from '../MetricCard';
 import { StatusBadge } from '../StatusBadge';
 import { LoadingState } from '../LoadingState';
@@ -57,6 +58,7 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
   selectedTargetId,
   onSelectTarget,
 }) => {
+  const { mode, assertLiveOrThrow, showRuntimeError } = useRuntime();
   const [subTab, setSubTab] = useState<SubTab>('explorer');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -174,12 +176,14 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
     if (!diffEvidenceA || !diffEvidenceB) return;
     setIsDiffing(true);
     try {
+      assertLiveOrThrow('compute differential analysis');
       const res = await api.computeEvidenceDiff(diffEvidenceA, diffEvidenceB, filterNoise);
       if (res?.diff) {
         setDiffsList((prev) => [res.diff, ...prev]);
         setSelectedDiff(res.diff);
       }
     } catch (err: any) {
+      showRuntimeError(err);
       console.error('Diff error:', err);
     } finally {
       setIsDiffing(false);
@@ -192,6 +196,7 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
     setIsEvaluating(true);
     setEvalResultNotice(null);
     try {
+      assertLiveOrThrow('evaluate security contradiction');
       const exp = expectationsList.find((e) => e.id === evalExpectationId);
       const res = await api.evaluateContradiction({
         target_id: activeTarget.id,
@@ -209,6 +214,7 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
         setEvalResultNotice(res?.message || 'Observed state conforms to expectation.');
       }
     } catch (err: any) {
+      showRuntimeError(err);
       setEvalResultNotice(`Evaluation error: ${err.message}`);
     } finally {
       setIsEvaluating(false);
@@ -218,6 +224,7 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
   // Handle Contradiction Status Update
   const handleUpdateContradictionStatus = async (id: string, status: ContradictionStatus) => {
     try {
+      assertLiveOrThrow('update contradiction status');
       const res = await api.updateContradictionStatus(id, status);
       if (res?.contradiction) {
         setContradictionsList((prev) =>
@@ -225,6 +232,7 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
         );
       }
     } catch (err: any) {
+      showRuntimeError(err);
       console.error('Failed to update contradiction status:', err);
     }
   };
@@ -272,6 +280,7 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
     };
 
     try {
+      assertLiveOrThrow('record evidence');
       const res = await api.recordEvidence(payload);
       if (res?.evidence) {
         setEvidenceList((prev) => [res.evidence, ...prev]);
@@ -288,6 +297,7 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
         });
       }
     } catch (err: any) {
+      showRuntimeError(err);
       console.error('Failed to record evidence:', err);
     }
   };

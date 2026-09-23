@@ -11,6 +11,7 @@ import {
   ResearchMemory,
 } from '../../types';
 import { api } from '../../lib/api';
+import { useRuntime } from '../../context/RuntimeContext';
 import {
   Network,
   History,
@@ -46,6 +47,7 @@ export const InvestigationEngineView: React.FC<InvestigationEngineViewProps> = (
   selectedTargetId,
   onSelectTarget,
 }) => {
+  const { mode, assertLiveOrThrow, showRuntimeError } = useRuntime();
   const [activeSubTab, setActiveSubTab] = useState<SubTab>('clusters');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -106,6 +108,7 @@ export const InvestigationEngineView: React.FC<InvestigationEngineViewProps> = (
     setValidatingClusterId(cluster.id);
     setValidationFact(null);
     try {
+      assertLiveOrThrow('execute controlled cluster validation');
       const res = await api.executeControlledValidation({
         target_id: activeTargetId,
         cluster_id: cluster.id,
@@ -113,7 +116,8 @@ export const InvestigationEngineView: React.FC<InvestigationEngineViewProps> = (
       setValidationFact(res.output_fact || 'Safe probe confirmed expected behavior.');
       await api.updateClusterStatus(cluster.id, 'VALIDATING');
       await loadAllIntelligence();
-    } catch (err) {
+    } catch (err: any) {
+      showRuntimeError(err);
       console.error('Failed to validate cluster', err);
     } finally {
       setValidatingClusterId(null);

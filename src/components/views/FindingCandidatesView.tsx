@@ -6,6 +6,7 @@ import {
   SecuritySignal,
 } from '../../types';
 import { api } from '../../lib/api';
+import { useRuntime } from '../../context/RuntimeContext';
 import {
   ShieldAlert,
   Search,
@@ -47,6 +48,7 @@ export const FindingCandidatesView: React.FC<FindingCandidatesViewProps> = ({
   selectedTargetId,
   onSelectTarget,
 }) => {
+  const { mode, assertLiveOrThrow, showRuntimeError } = useRuntime();
   const [candidates, setCandidates] = useState<FindingCandidate[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState<FindingCandidate | null>(null);
   const [filterState, setFilterState] = useState<string>('ALL');
@@ -88,9 +90,11 @@ export const FindingCandidatesView: React.FC<FindingCandidatesViewProps> = ({
     if (!activeTargetId) return;
     setIsAnalyzing(true);
     try {
+      assertLiveOrThrow('run ai security analysis');
       await api.runAIAnalysis({ target_id: activeTargetId });
       await loadCandidates();
-    } catch (err) {
+    } catch (err: any) {
+      showRuntimeError(err);
       console.error('AI analysis run failed', err);
     } finally {
       setIsAnalyzing(false);
@@ -100,12 +104,14 @@ export const FindingCandidatesView: React.FC<FindingCandidatesViewProps> = ({
   const handleUpdateState = async (newState: CandidateState, reason?: string) => {
     if (!selectedCandidate) return;
     try {
+      assertLiveOrThrow('update candidate state');
       const updated = await api.updateCandidateState(selectedCandidate.id, newState, reason);
       setSelectedCandidate(updated);
       setCandidates((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
       setShowDismissModal(false);
       setDismissReason('');
-    } catch (err) {
+    } catch (err: any) {
+      showRuntimeError(err);
       console.error('Failed to update candidate state', err);
     }
   };
@@ -115,13 +121,15 @@ export const FindingCandidatesView: React.FC<FindingCandidatesViewProps> = ({
     setIsValidating(true);
     setValidationSuccessMsg(null);
     try {
+      assertLiveOrThrow('execute safe validation probe');
       const result = await api.executeControlledValidation({
         target_id: activeTargetId,
         candidate_id: selectedCandidate.id,
       });
       setValidationSuccessMsg(result.output_fact || 'Safe validation executed successfully without side-effects.');
       await loadCandidates();
-    } catch (err) {
+    } catch (err: any) {
+      showRuntimeError(err);
       console.error('Safe validation failed', err);
     } finally {
       setIsValidating(false);

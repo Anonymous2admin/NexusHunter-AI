@@ -10,7 +10,12 @@ interface RuntimeContextType {
   isPartial: boolean;
   health: HealthResponse | null;
   refreshRuntime: () => Promise<void>;
-  assertLiveOrThrow: (operationName: string) => void;
+  assertLiveOrThrow: (operationName: string, allowDemo?: boolean) => void;
+  allowDemoMutations: boolean;
+  setAllowDemoMutations: (allow: boolean) => void;
+  runtimeError: string | null;
+  showRuntimeError: (err: any) => void;
+  clearRuntimeError: () => void;
 }
 
 const RuntimeContext = createContext<RuntimeContextType | undefined>(undefined);
@@ -18,6 +23,8 @@ const RuntimeContext = createContext<RuntimeContextType | undefined>(undefined);
 export const RuntimeProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [mode, setMode] = useState<RuntimeMode>('DEMO');
   const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [allowDemoMutations, setAllowDemoMutations] = useState<boolean>(false);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
 
   const refreshRuntime = useCallback(async () => {
     try {
@@ -42,15 +49,33 @@ export const RuntimeProvider: React.FC<{ children: ReactNode }> = ({ children })
     return () => clearInterval(interval);
   }, [refreshRuntime]);
 
+  const showRuntimeError = useCallback((err: any) => {
+    const msg = err?.message || (typeof err === 'string' ? err : 'Unknown runtime error occurred.');
+    setRuntimeError(msg);
+  }, []);
+
+  const clearRuntimeError = useCallback(() => {
+    setRuntimeError(null);
+  }, []);
+
   const assertLiveOrThrow = useCallback(
-    (operationName: string) => {
+    (operationName: string, allowDemoOverride?: boolean) => {
+      if (mode === 'OFFLINE') {
+        const msg = `Action '${operationName}' rejected: Backend is currently OFFLINE. Cannot execute mutations without an active connection.`;
+        setRuntimeError(msg);
+        throw new Error(msg);
+      }
+
       if (mode !== 'LIVE') {
-        throw new Error(
-          `Action '${operationName}' rejected: Mutation operations against live environments require an active LIVE backend connection. Currently running in ${mode} mode.`
-        );
+        const canExecuteDemo = allowDemoOverride !== undefined ? allowDemoOverride : allowDemoMutations;
+        if (!canExecuteDemo) {
+          const msg = `Action '${operationName}' rejected: Mutation operations against live environments require an active LIVE backend connection. Currently running in ${mode} mode. Toggle Sandbox Mode in the top banner to permit synthetic sandbox mutations.`;
+          setRuntimeError(msg);
+          throw new Error(msg);
+        }
       }
     },
-    [mode]
+    [mode, allowDemoMutations]
   );
 
   const value: RuntimeContextType = {
@@ -62,6 +87,11 @@ export const RuntimeProvider: React.FC<{ children: ReactNode }> = ({ children })
     health,
     refreshRuntime,
     assertLiveOrThrow,
+    allowDemoMutations,
+    setAllowDemoMutations,
+    runtimeError,
+    showRuntimeError,
+    clearRuntimeError,
   };
 
   return <RuntimeContext.Provider value={value}>{children}</RuntimeContext.Provider>;

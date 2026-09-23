@@ -20,6 +20,12 @@ import {
   EvidenceIntegrityResult,
   RuntimeMode,
   DataResponse,
+  ScopeImportReview,
+  JSAsset,
+  JSReference,
+  JSSecretIndicator,
+  CloudReference,
+  InvestigationPlan,
 } from '../types';
 
 export class ApiError extends Error {
@@ -607,6 +613,88 @@ class ApiClient {
         prompt,
         evidence_ids: evidenceIds,
       }),
+    });
+  }
+
+  // Phase 8: Scope Intelligence & Manifest Normalization
+  async getScopeImports(): Promise<ScopeImportReview[]> {
+    const res = await this.request<ScopeImportReview[]>('/api/scope/imports');
+    return res || [];
+  }
+
+  async importScopeFile(content: string, fileName?: string): Promise<ScopeImportReview> {
+    const fn = encodeURIComponent(fileName || 'scope_import.json');
+    return this.request<ScopeImportReview>(`/api/scope/import?file_name=${fn}`, {
+      method: 'POST',
+      body: content,
+    });
+  }
+
+  async confirmScopeImport(importId: string, selectedRootDomain: string): Promise<ScopeImportReview> {
+    return this.request<ScopeImportReview>(`/api/scope/imports/${encodeURIComponent(importId)}/confirm`, {
+      method: 'POST',
+      body: JSON.stringify({ selected_root_domain: selectedRootDomain }),
+    });
+  }
+
+  // Phase 8: JavaScript Intelligence
+  async getJSAssets(targetId: string): Promise<JSAsset[]> {
+    const res = await this.request<JSAsset[]>(`/api/targets/${encodeURIComponent(targetId)}/js-assets`);
+    return res || [];
+  }
+
+  async getJSReferences(targetId: string): Promise<JSReference[]> {
+    const res = await this.request<JSReference[]>(`/api/targets/${encodeURIComponent(targetId)}/js-references`);
+    return res || [];
+  }
+
+  async getJSSecrets(targetId: string): Promise<JSSecretIndicator[]> {
+    const res = await this.request<JSSecretIndicator[]>(`/api/targets/${encodeURIComponent(targetId)}/js-secrets`);
+    return res || [];
+  }
+
+  async triggerJSAnalysis(targetId: string, payload: { script_url: string; asset_id?: string; content?: string }): Promise<any> {
+    return this.request<any>(`/api/targets/${encodeURIComponent(targetId)}/js-analyze`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  // Phase 8: Cloud Infrastructure Intelligence
+  async getCloudReferences(targetId: string): Promise<CloudReference[]> {
+    const res = await this.request<CloudReference[]>(`/api/targets/${encodeURIComponent(targetId)}/cloud-references`);
+    return res || [];
+  }
+
+  async validateCloudReference(cloudRefId: string): Promise<any> {
+    return this.request<any>('/api/cloud-references/validate', {
+      method: 'POST',
+      body: JSON.stringify({ cloud_reference_id: cloudRefId }),
+    });
+  }
+
+  // Phase 8: Investigation Planner & Approvals
+  async getInvestigationPlans(targetId?: string): Promise<InvestigationPlan[]> {
+    const query = targetId ? `?target_id=${encodeURIComponent(targetId)}` : '';
+    const res = await this.request<InvestigationPlan[]>(`/api/investigation-plans${query}`);
+    return res || [];
+  }
+
+  async getInvestigationPlan(planId: string): Promise<InvestigationPlan> {
+    return this.request<InvestigationPlan>(`/api/investigation-plans/${encodeURIComponent(planId)}`);
+  }
+
+  async approveInvestigationStep(planId: string, stepNumber: number): Promise<InvestigationPlan> {
+    return this.request<InvestigationPlan>(`/api/investigation-plans/${encodeURIComponent(planId)}/approve-step`, {
+      method: 'POST',
+      body: JSON.stringify({ step_number: stepNumber }),
+    });
+  }
+
+  async generateHuntingPlan(targetId: string, hypothesisId?: string): Promise<InvestigationPlan> {
+    return this.request<InvestigationPlan>('/api/investigation-plans/generate', {
+      method: 'POST',
+      body: JSON.stringify({ target_id: targetId, hypothesis_id: hypothesisId }),
     });
   }
 }
