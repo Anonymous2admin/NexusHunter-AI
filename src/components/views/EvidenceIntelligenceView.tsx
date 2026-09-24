@@ -97,14 +97,24 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
   // Cryptographic Integrity Verification State
   const [verifyingIntegrityId, setVerifyingIntegrityId] = useState<string | null>(null);
   const [integrityResults, setIntegrityResults] = useState<Record<string, EvidenceIntegrityResult>>({});
+  const [integrityErrors, setIntegrityErrors] = useState<Record<string, string>>({});
 
   const handleVerifyIntegrity = async (evidenceId: string) => {
     setVerifyingIntegrityId(evidenceId);
+    setIntegrityErrors((prev) => {
+      const copy = { ...prev };
+      delete copy[evidenceId];
+      return copy;
+    });
     try {
       const res = await api.verifyEvidenceIntegrity(evidenceId);
       setIntegrityResults((prev) => ({ ...prev, [evidenceId]: res }));
     } catch (err: any) {
       console.error('Integrity audit failed:', err);
+      setIntegrityErrors((prev) => ({
+        ...prev,
+        [evidenceId]: err?.message || 'Failed to verify cryptographic integrity with backend',
+      }));
     } finally {
       setVerifyingIntegrityId(null);
     }
@@ -123,11 +133,11 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
     asset_id: '',
     evidence_type: 'HTTP_RESPONSE',
     source: 'MANUAL_PROBE',
-    url: 'https://example.com/v1/auth/token',
+    url: '',
     method: 'GET',
     status_code: 200,
-    headers: 'Content-Type: application/json\nAccess-Control-Allow-Origin: *',
-    body: '{"status":"active"}',
+    headers: '',
+    body: '',
   });
 
   const activeTarget = useMemo(
@@ -256,13 +266,13 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
     try {
       assertLiveOrThrow('evaluate security contradiction');
       const exp = expectationsList.find((e) => e.id === evalExpectationId);
-      const targetAssetId = exp?.asset_id || targetAssets[0]?.id;
-      const targetEndpoint =
-        exp?.endpoint ||
-        (activeTarget?.root_domain ? `https://${activeTarget.root_domain}/v1/auth/token` : '/v1/auth/token');
-
+      const targetAssetId = exp?.asset_id;
       if (!targetAssetId) {
-        throw new Error('Evaluation rejected: No target asset available for contradiction analysis.');
+        throw new Error('Evaluation rejected: Selected expectation has no attributed asset. Explicit asset attribution is required.');
+      }
+      const targetEndpoint = exp?.endpoint;
+      if (!targetEndpoint || !targetEndpoint.trim()) {
+        throw new Error('Evaluation rejected: Selected expectation has no explicit endpoint URL.');
       }
 
       const res = await api.evaluateContradiction({
@@ -307,13 +317,22 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
   // Handle Record New Evidence (Backend-authoritative SHA-256 and body hash)
   const handleCreateEvidence = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!recordForm.summary) return;
-
-    const chosenAssetId = recordForm.asset_id || targetAssets[0]?.id;
-    if (!chosenAssetId) {
-      showRuntimeError('Cannot record evidence: Target has no attributed assets available.');
+    if (!recordForm.summary?.trim()) {
+      showRuntimeError('Summary description is required.');
       return;
     }
+
+    if (!recordForm.asset_id) {
+      showRuntimeError('Explicit target asset selection is required. Please select an attributed asset.');
+      return;
+    }
+
+    if (!recordForm.url?.trim()) {
+      showRuntimeError('Target endpoint URL is required. Please provide an explicit observed endpoint URL.');
+      return;
+    }
+
+    const chosenAssetId = recordForm.asset_id;
 
     let parsedHeaders: Record<string, string> = {};
     recordForm.headers.split('\n').forEach((line) => {
@@ -359,14 +378,14 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
         setShowRecordModal(false);
         setRecordForm({
           summary: '',
-          asset_id: chosenAssetId,
+          asset_id: '',
           evidence_type: 'HTTP_RESPONSE',
           source: 'MANUAL_PROBE',
-          url: `https://${activeTarget?.root_domain || 'example.com'}/v1/auth/token`,
+          url: '',
           method: 'GET',
           status_code: 200,
-          headers: 'Content-Type: application/json\nAccess-Control-Allow-Origin: *',
-          body: '{"status":"active"}',
+          headers: '',
+          body: '',
         });
       }
     } catch (err: any) {
@@ -818,6 +837,27 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
                               </button>
                             </div>
 
+                            {/* Cryptographic Integrity Error Card (Phase 8.2R) */}
+                            {integrityErrors[ev.id] && (
+                              <div className="rounded-md p-2.5 text-xs border bg-rose-950/40 border-rose-800/60 text-rose-300">
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-2">
+                                    <AlertTriangle className="h-4 w-4 shrink-0 text-rose-400" />
+                                    <div>
+                                      <span className="font-semibold block text-rose-200">INTEGRITY CHECK FAILED</span>
+                                      <span className="text-[11px] text-rose-400">{integrityErrors[ev.id]}</span>
+                                    </div>
+                                  </div>
+                                  <button
+                                    onClick={() => handleVerifyIntegrity(ev.id)}
+                                    className="rounded bg-rose-900 hover:bg-rose-800 border border-rose-700 px-2.5 py-1 text-xs font-semibold text-rose-100 transition-colors"
+                                  >
+                                    Retry
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
                             {/* Cryptographic Integrity Result Card */}
                             {integrityResults[ev.id] && (
                               <div
@@ -836,12 +876,12 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
                                   <div className="space-y-1">
                                     <div className="font-semibold">
                                       {integrityResults[ev.id].is_tampered
-                                        ? 'TAMPERING DETECTED: Computed hash does not match original stored record!'
+                                        ? 'INTEGRITY MISMATCH: Computed hash does not match original stored record!'
                                         : 'Cryptographic Integrity Confirmed: Canonical SHA-256 matches stored record.'}
                                     </div>
                                     <div className="font-mono text-[11px] text-slate-400">
-                                      <div>Stored: {integrityResults[ev.id].original_sha256}</div>
-                                      <div>Computed: {integrityResults[ev.id].computed_sha256}</div>
+                                      <div>Stored hash: {integrityResults[ev.id].original_sha256}</div>
+                                      <div>Computed hash: {integrityResults[ev.id].computed_sha256}</div>
                                       <div className="text-[10px] text-slate-500 mt-0.5">
                                         Audited at {new Date(integrityResults[ev.id].verified_at).toLocaleTimeString()}
                                       </div>
@@ -1412,10 +1452,12 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
                 <label className="block text-slate-300 font-semibold mb-1">Target Asset Attribution</label>
                 {targetAssets.length > 0 ? (
                   <select
-                    value={recordForm.asset_id || targetAssets[0]?.id || ''}
+                    value={recordForm.asset_id}
                     onChange={(e) => setRecordForm({ ...recordForm, asset_id: e.target.value })}
+                    required
                     className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-slate-200 focus:border-indigo-500 focus:outline-hidden"
                   >
+                    <option value="">-- Select an Attributed Target Asset (Required) --</option>
                     {targetAssets.map((ast) => (
                       <option key={ast.id} value={ast.id}>
                         {ast.hostname || ast.id} ({ast.id})
@@ -1434,7 +1476,7 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
                 <input
                   type="text"
                   required
-                  placeholder="e.g. GET /v1/auth/token permits unauthenticated origin reflection"
+                  placeholder="Select an authorized observed endpoint or enter observed security behavior"
                   value={recordForm.summary}
                   onChange={(e) => setRecordForm({ ...recordForm, summary: e.target.value })}
                   className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-slate-200 focus:border-indigo-500 focus:outline-hidden"
@@ -1470,7 +1512,9 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
               <div>
                 <label className="block text-slate-300 font-semibold mb-1">Target Endpoint URL</label>
                 <input
-                  type="text"
+                  type="url"
+                  required
+                  placeholder="https://api.yourdomain.com/path (explicit observed URL)"
                   value={recordForm.url}
                   onChange={(e) => setRecordForm({ ...recordForm, url: e.target.value })}
                   className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-slate-200 focus:border-indigo-500 focus:outline-hidden"
@@ -1481,6 +1525,7 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
                 <label className="block text-slate-300 font-semibold mb-1">Headers (Newline separated)</label>
                 <textarea
                   rows={3}
+                  placeholder="Header-Name: Header-Value (one per line)"
                   value={recordForm.headers}
                   onChange={(e) => setRecordForm({ ...recordForm, headers: e.target.value })}
                   className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-slate-200 focus:border-indigo-500 focus:outline-hidden"
@@ -1491,6 +1536,7 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
                 <label className="block text-slate-300 font-semibold mb-1">Response Body / Payload Snippet</label>
                 <textarea
                   rows={2}
+                  placeholder="Response body snippet or observed payload content"
                   value={recordForm.body}
                   onChange={(e) => setRecordForm({ ...recordForm, body: e.target.value })}
                   className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-slate-200 focus:border-indigo-500 focus:outline-hidden"

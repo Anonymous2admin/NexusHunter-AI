@@ -149,6 +149,7 @@ func main() {
 	scopeValidator := scope.NewValidator()
 	eventBus := events.NewMemoryEventBus(500)
 	jobManager := jobs.NewManager(eventBus)
+	jobManager.SetTargetChecker(targetStore)
 
 	engineCfg := recon.DefaultEngineConfig()
 	pipeline := recon.NewPipeline(

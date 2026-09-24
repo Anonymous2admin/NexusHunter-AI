@@ -48,6 +48,8 @@ interface SecurityReasoningViewProps {
 
 type ReasoningTab = 'hypotheses' | 'signals' | 'investigations' | 'boundaries' | 'ai-assist';
 
+type SectionStatus = 'IDLE' | 'LOADING' | 'SUCCESS_DATA' | 'SUCCESS_EMPTY' | 'ERROR' | 'OFFLINE';
+
 export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
   targets,
   selectedTargetId,
@@ -66,6 +68,12 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
   const [permissionMatrix, setPermissionMatrix] = useState<PermissionMatrixEntry[]>([]);
   const [securityControls, setSecurityControls] = useState<SecurityControlRecord[]>([]);
 
+  // Section States (Phase 8.2R Partial Load & Error Model)
+  const [hypothesesStatus, setHypothesesStatus] = useState<SectionStatus>('IDLE');
+  const [signalsStatus, setSignalsStatus] = useState<SectionStatus>('IDLE');
+  const [investigationsStatus, setInvestigationsStatus] = useState<SectionStatus>('IDLE');
+  const [sectionErrors, setSectionErrors] = useState<Record<string, string>>({});
+
   // UI state
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isCycling, setIsCycling] = useState<boolean>(false);
@@ -82,47 +90,123 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
   const [aiResult, setAiResult] = useState<any | null>(null);
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
 
-  // Sync target selection with props
-  useEffect(() => {
-    if (selectedTargetId && selectedTargetId !== targetId) {
-      setTargetId(selectedTargetId);
-    }
-  }, [selectedTargetId]);
+  // Phase 8.2R Item 20: Target Switch Safety - Atomic cleanup of previous target data
+  const clearTargetState = useCallback(() => {
+    setSignals([]);
+    setGroups([]);
+    setHypotheses([]);
+    setInvestigations([]);
+    setTrustBoundaries([]);
+    setPermissionMatrix([]);
+    setSecurityControls([]);
+    setSelectedHypothesis(null);
+    setViewingEvidence(null);
+    setAiResult(null);
+    setError(null);
+    setSuccessMessage(null);
+    setSectionErrors({});
+    setHypothesesStatus('IDLE');
+    setSignalsStatus('IDLE');
+    setInvestigationsStatus('IDLE');
+  }, []);
 
   const loadReasoningData = useCallback(async (tid: string) => {
     if (!tid) return;
     setIsLoading(true);
     setError(null);
-    try {
-      const [sigs, grps, hyps, invs, tbs, pms, scs] = await Promise.all([
-        api.getSignals(tid).catch(() => []),
-        api.getHypothesisGroups(tid).catch(() => []),
-        api.getHypotheses(tid).catch(() => []),
-        api.getInvestigations(tid).catch(() => []),
-        api.getAssetTrustBoundaries('', tid).catch(() => []),
-        api.getAssetPermissionMatrix('', tid).catch(() => []),
-        api.getAssetSecurityControls('', tid).catch(() => []),
-      ]);
+    setHypothesesStatus('LOADING');
+    setSignalsStatus('LOADING');
+    setInvestigationsStatus('LOADING');
 
-      setSignals(sigs || []);
-      setGroups(grps || []);
-      setHypotheses(hyps || []);
-      setInvestigations(invs || []);
-      setTrustBoundaries(tbs || []);
-      setPermissionMatrix(pms || []);
-      setSecurityControls(scs || []);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load reasoning intelligence state.');
-    } finally {
-      setIsLoading(false);
+    const [sigsRes, grpsRes, hypsRes, invsRes, tbsRes, pmsRes, scsRes] = await Promise.allSettled([
+      api.getSignals(tid),
+      api.getHypothesisGroups(tid),
+      api.getHypotheses(tid),
+      api.getInvestigations(tid),
+      api.getAssetTrustBoundaries('', tid),
+      api.getAssetPermissionMatrix('', tid),
+      api.getAssetSecurityControls('', tid),
+    ]);
+
+    const newErrors: Record<string, string> = {};
+
+    if (sigsRes.status === 'fulfilled') {
+      const data = sigsRes.value || [];
+      setSignals(data);
+      setSignalsStatus(data.length > 0 ? 'SUCCESS_DATA' : 'SUCCESS_EMPTY');
+    } else {
+      const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+      const msg = sigsRes.reason?.message || 'Failed to load reasoning signals';
+      newErrors.signals = msg;
+      setSignalsStatus(isOffline ? 'OFFLINE' : 'ERROR');
     }
+
+    if (grpsRes.status === 'fulfilled') {
+      setGroups(grpsRes.value || []);
+    } else {
+      newErrors.groups = grpsRes.reason?.message || 'Failed to load hypothesis groups';
+    }
+
+    if (hypsRes.status === 'fulfilled') {
+      const data = hypsRes.value || [];
+      setHypotheses(data);
+      setHypothesesStatus(data.length > 0 ? 'SUCCESS_DATA' : 'SUCCESS_EMPTY');
+    } else {
+      const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+      const msg = hypsRes.reason?.message || 'Failed to load hypotheses';
+      newErrors.hypotheses = msg;
+      setHypothesesStatus(isOffline ? 'OFFLINE' : 'ERROR');
+    }
+
+    if (invsRes.status === 'fulfilled') {
+      const data = invsRes.value || [];
+      setInvestigations(data);
+      setInvestigationsStatus(data.length > 0 ? 'SUCCESS_DATA' : 'SUCCESS_EMPTY');
+    } else {
+      const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+      const msg = invsRes.reason?.message || 'Failed to load investigations';
+      newErrors.investigations = msg;
+      setInvestigationsStatus(isOffline ? 'OFFLINE' : 'ERROR');
+    }
+
+    if (tbsRes.status === 'fulfilled') {
+      setTrustBoundaries(tbsRes.value || []);
+    }
+    if (pmsRes.status === 'fulfilled') {
+      setPermissionMatrix(pmsRes.value || []);
+    }
+    if (scsRes.status === 'fulfilled') {
+      setSecurityControls(scsRes.value || []);
+    }
+
+    setSectionErrors(newErrors);
+
+    const hasAnyError = Object.keys(newErrors).length > 0;
+    const hasAnySuccess = sigsRes.status === 'fulfilled' || hypsRes.status === 'fulfilled' || invsRes.status === 'fulfilled';
+
+    if (hasAnyError && hasAnySuccess) {
+      setError('Partial reasoning intelligence loaded. Some sections experienced endpoint errors.');
+    } else if (hasAnyError && !hasAnySuccess) {
+      setError('Failed to load reasoning intelligence state from backend.');
+    }
+
+    setIsLoading(false);
   }, []);
 
+  // Sync target selection with props and ensure target switch safety
   useEffect(() => {
-    if (targetId) {
+    if (selectedTargetId && selectedTargetId !== targetId) {
+      clearTargetState();
+      setTargetId(selectedTargetId);
+      loadReasoningData(selectedTargetId);
+    }
+  }, [selectedTargetId, targetId, clearTargetState, loadReasoningData]);
+
+  useEffect(() => {
+    if (targetId && hypothesesStatus === 'IDLE' && !isLoading) {
       loadReasoningData(targetId);
     }
-  }, [targetId, loadReasoningData]);
+  }, [targetId, hypothesesStatus, isLoading, loadReasoningData]);
 
   const handleRunCycle = async () => {
     if (!targetId) return;
@@ -270,8 +354,11 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
           <select
             value={targetId}
             onChange={(e) => {
-              setTargetId(e.target.value);
-              onSelectTarget(e.target.value);
+              const newTid = e.target.value;
+              clearTargetState();
+              setTargetId(newTid);
+              onSelectTarget(newTid);
+              loadReasoningData(newTid);
             }}
             className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm text-slate-200 focus:border-indigo-500 focus:outline-none"
           >
@@ -412,14 +499,31 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
           }`}
         >
           <Sparkles className="h-4 w-4" />
-          <span>AI Reasoning Guardrail</span>
+          <span>Evidence-Grounded Planner & Guardrail</span>
         </button>
       </div>
 
       {/* Tab 1: Competing Hypotheses Workspace */}
       {activeTab === 'hypotheses' && (
         <div className="space-y-6">
-          {hypotheses.length === 0 ? (
+          {hypothesesStatus === 'ERROR' || hypothesesStatus === 'OFFLINE' ? (
+            <div className="rounded-lg border border-red-800/60 bg-red-950/30 p-8 text-center space-y-3">
+              <AlertTriangle className="mx-auto h-8 w-8 text-red-400" />
+              <h3 className="text-sm font-semibold text-red-200">
+                {hypothesesStatus === 'OFFLINE' ? 'OFFLINE: Unable to Connect' : 'Failed to Load Hypotheses'}
+              </h3>
+              <p className="text-xs text-red-400 max-w-sm mx-auto">
+                {sectionErrors.hypotheses || 'An error occurred while loading hypothesis models from backend.'}
+              </p>
+              <button
+                onClick={() => loadReasoningData(targetId)}
+                className="inline-flex items-center gap-2 rounded-lg bg-red-800 hover:bg-red-700 px-3.5 py-1.5 text-xs font-semibold text-white transition-colors"
+              >
+                <RotateCw className="h-3.5 w-3.5" />
+                Retry
+              </button>
+            </div>
+          ) : hypotheses.length === 0 ? (
             <div className="rounded-lg border border-dashed border-slate-800 p-8 text-center">
               <Brain className="mx-auto h-8 w-8 text-slate-600" />
               <h3 className="mt-2 text-sm font-semibold text-slate-300">No Hypotheses Generated Yet</h3>
@@ -693,7 +797,7 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
                         onClick={() => handlePlanInvestigation(selectedHypothesis.id)}
                         className="w-full rounded-lg bg-indigo-600 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 transition-colors"
                       >
-                        Plan Safe Investigation
+                        Plan Safe Investigation (Evidence-Grounded)
                       </button>
                     </div>
                   </div>
@@ -720,8 +824,30 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
             </span>
           </div>
 
-          <div className="space-y-2.5">
-            {signals.map((sig) => (
+          {signalsStatus === 'ERROR' || signalsStatus === 'OFFLINE' ? (
+            <div className="rounded-lg border border-red-800/60 bg-red-950/30 p-8 text-center space-y-3">
+              <AlertTriangle className="mx-auto h-8 w-8 text-red-400" />
+              <h3 className="text-sm font-semibold text-red-200">
+                {signalsStatus === 'OFFLINE' ? 'OFFLINE: Unable to Connect' : 'Failed to Load Security Signals'}
+              </h3>
+              <p className="text-xs text-red-400 max-w-sm mx-auto">
+                {sectionErrors.signals || 'An error occurred while loading reasoning signals from backend.'}
+              </p>
+              <button
+                onClick={() => loadReasoningData(targetId)}
+                className="inline-flex items-center gap-2 rounded-lg bg-red-800 hover:bg-red-700 px-3.5 py-1.5 text-xs font-semibold text-white transition-colors"
+              >
+                <RotateCw className="h-3.5 w-3.5" />
+                Retry
+              </button>
+            </div>
+          ) : signals.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-800 p-8 text-center text-xs text-slate-500">
+              No security signals observed yet. Run a reasoning cycle to detect anomalies and behavioral deviations.
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              {signals.map((sig) => (
               <div key={sig.id} className="rounded-lg border border-slate-800 bg-slate-900/60 p-3.5 space-y-2">
                 <div className="flex items-start justify-between">
                   <div>
@@ -807,8 +933,9 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
               </div>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
+    )}
 
       {/* Tab 3: Investigation Plans & Execution */}
       {activeTab === 'investigations' && (
@@ -824,7 +951,24 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
             </div>
           </div>
 
-          {investigations.length === 0 ? (
+          {investigationsStatus === 'ERROR' || investigationsStatus === 'OFFLINE' ? (
+            <div className="rounded-lg border border-red-800/60 bg-red-950/30 p-8 text-center space-y-3">
+              <AlertTriangle className="mx-auto h-8 w-8 text-red-400" />
+              <h3 className="text-sm font-semibold text-red-200">
+                {investigationsStatus === 'OFFLINE' ? 'OFFLINE: Unable to Connect' : 'Investigations Unavailable'}
+              </h3>
+              <p className="text-xs text-red-400 max-w-sm mx-auto">
+                {sectionErrors.investigations || 'An error occurred while loading planned investigations from backend.'}
+              </p>
+              <button
+                onClick={() => loadReasoningData(targetId)}
+                className="inline-flex items-center gap-2 rounded-lg bg-red-800 hover:bg-red-700 px-3.5 py-1.5 text-xs font-semibold text-white transition-colors"
+              >
+                <RotateCw className="h-3.5 w-3.5" />
+                Retry
+              </button>
+            </div>
+          ) : investigations.length === 0 ? (
             <div className="rounded-lg border border-dashed border-slate-800 p-8 text-center text-xs text-slate-500">
               No active investigations. Select a hypothesis in the Competing Hypotheses tab and click "Plan Investigation".
             </div>

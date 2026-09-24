@@ -1946,6 +1946,14 @@ function nexusApiPlugin(): Plugin {
                 })
               );
             }
+            if (tgt.status && tgt.status !== 'ACTIVE') {
+              res.statusCode = 400;
+              return res.end(
+                JSON.stringify({
+                  error: { code: 'TARGET_NOT_ACTIVE', message: 'Cannot execute scan job for inactive target' },
+                })
+              );
+            }
             const newJob = {
               id: `job-${Date.now().toString(36)}`,
               target_id: body.target_id,
@@ -1953,6 +1961,8 @@ function nexusApiPlugin(): Plugin {
               status: 'QUEUED',
               created_at: new Date().toISOString(),
               metadata: body.metadata || {},
+              data_origin: 'DEMO_SYNTHETIC',
+              is_demo: true,
             };
             jobsStore.unshift(newJob);
             eventsStore.unshift({
@@ -1961,6 +1971,11 @@ function nexusApiPlugin(): Plugin {
               job_id: newJob.id,
               target_id: newJob.target_id,
               timestamp: new Date().toISOString(),
+              correlation_id: `corr-${Date.now().toString(36)}`,
+              previous_state: '',
+              new_state: 'QUEUED',
+              data_origin: 'DEMO_SYNTHETIC',
+              is_demo: true,
             });
             res.statusCode = 201;
             return res.end(JSON.stringify(newJob));
@@ -1976,18 +1991,35 @@ function nexusApiPlugin(): Plugin {
             res.statusCode = 404;
             return res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Scan job not found' } }));
           }
-          if (job.status !== 'QUEUED') {
+          const tgt = targetsStore.find((t) => t.id === job.target_id);
+          if (tgt && tgt.status && tgt.status !== 'ACTIVE') {
             res.statusCode = 400;
-            return res.end(JSON.stringify({ error: { code: 'INVALID_STATE', message: `Cannot start job in state ${job.status}` } }));
+            return res.end(JSON.stringify({ error: { code: 'TARGET_NOT_ACTIVE', message: 'Cannot execute scan job for inactive target' } }));
           }
+          if (job.status === 'RUNNING') {
+            res.statusCode = 200;
+            return res.end(JSON.stringify(job));
+          }
+          if (job.status !== 'QUEUED') {
+            res.statusCode = 409;
+            return res.end(JSON.stringify({ error: { code: 'INVALID_STATE_TRANSITION', message: `Cannot start job in state ${job.status}` } }));
+          }
+          const prevStatus = job.status;
           job.status = 'RUNNING';
           job.started_at = new Date().toISOString();
+          job.data_origin = 'DEMO_SYNTHETIC';
+          job.is_demo = true;
           eventsStore.unshift({
             event_id: `evt-${Date.now().toString(36)}`,
             event_type: 'JOB_STARTED',
             job_id: job.id,
             target_id: job.target_id,
             timestamp: new Date().toISOString(),
+            correlation_id: `corr-${Date.now().toString(36)}`,
+            previous_state: prevStatus,
+            new_state: 'RUNNING',
+            data_origin: 'DEMO_SYNTHETIC',
+            is_demo: true,
           });
           res.statusCode = 200;
           return res.end(JSON.stringify(job));
@@ -2002,18 +2034,35 @@ function nexusApiPlugin(): Plugin {
             res.statusCode = 404;
             return res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Scan job not found' } }));
           }
-          if (job.status !== 'RUNNING') {
+          const tgt = targetsStore.find((t) => t.id === job.target_id);
+          if (tgt && tgt.status && tgt.status !== 'ACTIVE') {
             res.statusCode = 400;
-            return res.end(JSON.stringify({ error: { code: 'INVALID_STATE', message: `Cannot complete job in state ${job.status}` } }));
+            return res.end(JSON.stringify({ error: { code: 'TARGET_NOT_ACTIVE', message: 'Cannot execute scan job for inactive target' } }));
           }
+          if (job.status === 'COMPLETED') {
+            res.statusCode = 200;
+            return res.end(JSON.stringify(job));
+          }
+          if (job.status !== 'RUNNING') {
+            res.statusCode = 409;
+            return res.end(JSON.stringify({ error: { code: 'INVALID_STATE_TRANSITION', message: `Cannot complete job in state ${job.status}` } }));
+          }
+          const prevStatus = job.status;
           job.status = 'COMPLETED';
           job.completed_at = new Date().toISOString();
+          job.data_origin = 'DEMO_SYNTHETIC';
+          job.is_demo = true;
           eventsStore.unshift({
             event_id: `evt-${Date.now().toString(36)}`,
             event_type: 'JOB_COMPLETED',
             job_id: job.id,
             target_id: job.target_id,
             timestamp: new Date().toISOString(),
+            correlation_id: `corr-${Date.now().toString(36)}`,
+            previous_state: prevStatus,
+            new_state: 'COMPLETED',
+            data_origin: 'DEMO_SYNTHETIC',
+            is_demo: true,
           });
           res.statusCode = 200;
           return res.end(JSON.stringify(job));
@@ -2029,19 +2078,37 @@ function nexusApiPlugin(): Plugin {
             res.statusCode = 404;
             return res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Scan job not found' } }));
           }
-          if (job.status === 'COMPLETED' || job.status === 'CANCELLED') {
+          const tgt = targetsStore.find((t) => t.id === job.target_id);
+          if (tgt && tgt.status && tgt.status !== 'ACTIVE') {
             res.statusCode = 400;
-            return res.end(JSON.stringify({ error: { code: 'INVALID_STATE', message: `Cannot fail job in terminal state ${job.status}` } }));
+            return res.end(JSON.stringify({ error: { code: 'TARGET_NOT_ACTIVE', message: 'Cannot execute scan job for inactive target' } }));
           }
+          if (job.status === 'FAILED') {
+            res.statusCode = 200;
+            return res.end(JSON.stringify(job));
+          }
+          // Reject QUEUED -> FAILED, COMPLETED -> FAILED, CANCELLED -> FAILED
+          if (job.status !== 'RUNNING') {
+            res.statusCode = 409;
+            return res.end(JSON.stringify({ error: { code: 'INVALID_STATE_TRANSITION', message: `Cannot fail job in state ${job.status} (must be RUNNING)` } }));
+          }
+          const prevStatus = job.status;
           job.status = 'FAILED';
           job.completed_at = new Date().toISOString();
           job.error = body.failure_reason || 'Scan job execution encountered failure';
+          job.data_origin = 'DEMO_SYNTHETIC';
+          job.is_demo = true;
           eventsStore.unshift({
             event_id: `evt-${Date.now().toString(36)}`,
             event_type: 'JOB_FAILED',
             job_id: job.id,
             target_id: job.target_id,
             timestamp: new Date().toISOString(),
+            correlation_id: `corr-${Date.now().toString(36)}`,
+            previous_state: prevStatus,
+            new_state: 'FAILED',
+            data_origin: 'DEMO_SYNTHETIC',
+            is_demo: true,
           });
           res.statusCode = 200;
           return res.end(JSON.stringify(job));
@@ -2056,18 +2123,35 @@ function nexusApiPlugin(): Plugin {
             res.statusCode = 404;
             return res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Scan job not found' } }));
           }
-          if (job.status === 'COMPLETED' || job.status === 'FAILED' || job.status === 'CANCELLED') {
+          const tgt = targetsStore.find((t) => t.id === job.target_id);
+          if (tgt && tgt.status && tgt.status !== 'ACTIVE') {
             res.statusCode = 400;
-            return res.end(JSON.stringify({ error: { code: 'INVALID_STATE', message: `Cannot cancel job in terminal state ${job.status}` } }));
+            return res.end(JSON.stringify({ error: { code: 'TARGET_NOT_ACTIVE', message: 'Cannot execute scan job for inactive target' } }));
           }
+          if (job.status === 'CANCELLED') {
+            res.statusCode = 200;
+            return res.end(JSON.stringify(job));
+          }
+          if (job.status === 'COMPLETED' || job.status === 'FAILED') {
+            res.statusCode = 409;
+            return res.end(JSON.stringify({ error: { code: 'INVALID_STATE_TRANSITION', message: `Cannot cancel job in terminal state ${job.status}` } }));
+          }
+          const prevStatus = job.status;
           job.status = 'CANCELLED';
           job.completed_at = new Date().toISOString();
+          job.data_origin = 'DEMO_SYNTHETIC';
+          job.is_demo = true;
           eventsStore.unshift({
             event_id: `evt-${Date.now().toString(36)}`,
             event_type: 'JOB_CANCELLED',
             job_id: job.id,
             target_id: job.target_id,
             timestamp: new Date().toISOString(),
+            correlation_id: `corr-${Date.now().toString(36)}`,
+            previous_state: prevStatus,
+            new_state: 'CANCELLED',
+            data_origin: 'DEMO_SYNTHETIC',
+            is_demo: true,
           });
           res.statusCode = 200;
           return res.end(JSON.stringify(job));

@@ -167,9 +167,7 @@ export const ScopeVerifierView: React.FC<ScopeVerifierViewProps> = ({
       const review = await api.importScopeFile(importFileInput.trim(), importFileName.trim());
       setImportReviews((prev) => [review, ...prev]);
       setSelectedReview(review);
-      if (review.root_domains && review.root_domains.length > 0) {
-        setSelectedRootCandidate(review.root_domains[0].normalized_domain);
-      }
+      setSelectedRootCandidate(''); // No silent selection; explicit choice mandatory
       setSuccessMsg(`Scope file ${review.file_name} successfully normalized with ${review.rules_discovered} rules.`);
       setImportFileInput('');
     } catch (err: any) {
@@ -671,9 +669,7 @@ export const ScopeVerifierView: React.FC<ScopeVerifierViewProps> = ({
                         type="button"
                         onClick={() => {
                           setSelectedReview(r);
-                          if (r.root_domains?.length > 0) {
-                            setSelectedRootCandidate(r.root_domains[0].normalized_domain);
-                          }
+                          setSelectedRootCandidate(''); // require explicit candidate selection
                         }}
                         className={`p-3 rounded-lg border text-left font-mono text-xs transition-colors ${
                           selectedReview?.id === r.id
@@ -721,35 +717,52 @@ export const ScopeVerifierView: React.FC<ScopeVerifierViewProps> = ({
                         <div className="rounded-lg border border-sky-900/60 bg-sky-950/30 p-4 space-y-3">
                           <div className="text-xs font-semibold text-sky-300 flex items-center gap-1.5">
                             <ShieldAlert className="h-4 w-4" />
-                            Explicit Root Domain Selection (Mandatory Fail-Closed Confirmation)
+                            {selectedReview.root_domains.length > 1
+                              ? 'Multiple Root Domains Detected'
+                              : 'Discovered Root Domain Candidate'}
                           </div>
                           <p className="text-[11px] text-slate-400">
-                            Select the primary verified apex domain to establish root program boundaries:
+                            {selectedReview.root_domains.length > 1
+                              ? 'Select Primary Root Domain to establish target authorization boundary:'
+                              : 'Explicit confirmation required. Click to verify the candidate root domain:'}
                           </p>
-                          <div className="flex flex-wrap gap-2">
+                          <div className="space-y-2">
                             {selectedReview.root_domains.map((rd) => (
-                              <button
+                              <div
                                 key={rd.id}
-                                type="button"
                                 onClick={() => setSelectedRootCandidate(rd.normalized_domain)}
-                                className={`px-3 py-1.5 rounded text-xs border font-mono ${
+                                className={`flex items-center gap-2.5 p-2 rounded border cursor-pointer font-mono text-xs transition-colors ${
                                   selectedRootCandidate === rd.normalized_domain
-                                    ? 'bg-sky-600 text-white border-sky-400 font-bold'
-                                    : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-500'
+                                    ? 'bg-sky-950/70 border-sky-500 text-sky-200'
+                                    : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-600'
                                 }`}
                               >
-                                {rd.normalized_domain} ({rd.confidence})
-                              </button>
+                                <span className="text-sm">
+                                  {selectedRootCandidate === rd.normalized_domain ? '◉' : '○'}
+                                </span>
+                                <span className="font-semibold">{rd.normalized_domain}</span>
+                                <span className="text-[10px] text-slate-500 ml-auto">
+                                  Confidence: {rd.confidence}
+                                </span>
+                              </div>
                             ))}
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => handleConfirmImport(selectedReview.id)}
-                            className="inline-flex items-center gap-2 rounded bg-emerald-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
-                          >
-                            <Check className="h-3.5 w-3.5" />
-                            Confirm & Establish Target Boundary
-                          </button>
+                          <div className="flex items-center justify-between pt-2">
+                            <span className="text-[10px] text-slate-400">
+                              {selectedRootCandidate
+                                ? `Selected: ${selectedRootCandidate}`
+                                : 'No root domain selected — Confirmation disabled'}
+                            </span>
+                            <button
+                              type="button"
+                              disabled={!selectedRootCandidate}
+                              onClick={() => handleConfirmImport(selectedReview.id)}
+                              className="inline-flex items-center gap-2 rounded bg-emerald-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              <Check className="h-3.5 w-3.5" />
+                              Confirm Scope & Establish Target Boundary
+                            </button>
+                          </div>
                         </div>
                       )}
 

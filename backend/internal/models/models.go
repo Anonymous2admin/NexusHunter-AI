@@ -96,6 +96,7 @@ const (
 	EventJobStarted          = "job.started"
 	EventJobCompleted        = "job.completed"
 	EventJobFailed           = "job.failed"
+	EventJobCancelled        = "job.cancelled"
 	EventAssetDiscovered     = "asset.discovered"
 	EventFindingCreated      = "finding.created"
 	EventReconStarted        = "recon.started"

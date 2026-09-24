@@ -33,6 +33,7 @@ func setupTestServer() (http.Handler, *Handler, *storage.MemoryStorage) {
 	scopeValidator := scope.NewValidator()
 	eventBus := events.NewMemoryEventBus(100)
 	jobMgr := jobs.NewManager(eventBus)
+	jobMgr.SetTargetChecker(memStore)
 
 	engineCfg := recon.DefaultEngineConfig()
 	pipeline := recon.NewPipeline(
@@ -616,5 +617,106 @@ func TestAPI_SecurityIntelligence_And_Validation(t *testing.T) {
 		t.Fatalf("expected 403 Forbidden for out-of-scope validation, got %d", rec.Code)
 	}
 }
+
+// TestJobLifecycleAPI validates POST /api/jobs/{id}/start, complete, fail, cancel and structured error handling.
+func TestJobLifecycleAPI(t *testing.T) {
+	router, _, memStore := setupTestServer()
+	ctx := context.Background()
+
+	// 1. Create active target
+	target := &models.Target{
+		ID:         "tgt-job-test",
+		Name:       "Job Lifecycle Target",
+		RootDomain: "example.com",
+		Status:     models.TargetStatusActive,
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}
+	_ = memStore.Create(ctx, target)
+
+	// 2. Create Job via POST /api/jobs
+	createPayload, _ := json.Marshal(map[string]interface{}{
+		"target_id": target.ID,
+		"type":      "PORT_SCAN",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/jobs", bytes.NewReader(createPayload))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created for POST /api/jobs, got %d", rec.Code)
+	}
+
+	var createdJob models.ScanJob
+	_ = json.NewDecoder(rec.Body).Decode(&createdJob)
+	if createdJob.Status != models.JobStatusQueued {
+		t.Fatalf("expected status QUEUED, got %s", createdJob.Status)
+	}
+
+	// 3. Test Invalid Transition: Complete while still QUEUED (should be 409 Conflict)
+	req = httptest.NewRequest(http.MethodPost, "/api/jobs/"+createdJob.ID+"/complete", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 Conflict completing QUEUED job, got %d", rec.Code)
+	}
+
+	// 4. Start Job: POST /api/jobs/{id}/start (QUEUED -> RUNNING)
+	req = httptest.NewRequest(http.MethodPost, "/api/jobs/"+createdJob.ID+"/start", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for start, got %d", rec.Code)
+	}
+
+	var runningJob models.ScanJob
+	_ = json.NewDecoder(rec.Body).Decode(&runningJob)
+	if runningJob.Status != models.JobStatusRunning || runningJob.StartedAt == nil {
+		t.Fatalf("expected status RUNNING with started_at set")
+	}
+
+	// 5. Complete Job: POST /api/jobs/{id}/complete (RUNNING -> COMPLETED)
+	req = httptest.NewRequest(http.MethodPost, "/api/jobs/"+createdJob.ID+"/complete", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for complete, got %d", rec.Code)
+	}
+
+	var completedJob models.ScanJob
+	_ = json.NewDecoder(rec.Body).Decode(&completedJob)
+	if completedJob.Status != models.JobStatusCompleted || completedJob.CompletedAt == nil {
+		t.Fatalf("expected status COMPLETED with completed_at set")
+	}
+
+	// 6. Test Invalid Transition: Start an already COMPLETED job (409 Conflict)
+	req = httptest.NewRequest(http.MethodPost, "/api/jobs/"+createdJob.ID+"/start", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 Conflict starting completed job, got %d", rec.Code)
+	}
+
+	// 7. Test Fail and Cancel on second job
+	createPayload2, _ := json.Marshal(map[string]interface{}{
+		"target_id": target.ID,
+		"type":      "DNS_RECON",
+	})
+	req = httptest.NewRequest(http.MethodPost, "/api/jobs", bytes.NewReader(createPayload2))
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	var job2 models.ScanJob
+	_ = json.NewDecoder(rec.Body).Decode(&job2)
+
+	// Cancel from QUEUED
+	req = httptest.NewRequest(http.MethodPost, "/api/jobs/"+job2.ID+"/cancel", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK cancelling queued job, got %d", rec.Code)
+	}
+}
+
 
 

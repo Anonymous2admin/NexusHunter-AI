@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -147,7 +148,7 @@ func (h *Handler) ConfirmScopeImport(w http.ResponseWriter, r *http.Request) {
 
 	// Invariant: Cannot re-confirm an already confirmed import
 	if rev.Status == "CONFIRMED" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "scope import has already been confirmed"})
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "scope import has already been confirmed"})
 		return
 	}
 	if rev.Status == "REJECTED" {
@@ -224,12 +225,19 @@ func (h *Handler) ConfirmScopeImport(w http.ResponseWriter, r *http.Request) {
 		target.ScopeConfig.Exclude = append(target.ScopeConfig.Exclude, rev.CanonicalScope.ExcludeHosts...)
 	}
 
+	if err := h.p8ScopeImportRepo.ConfirmImportReview(ctx, id, selectedRoot, target.ID); err != nil {
+		if errors.Is(err, storage.ErrInvalidState) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "scope import has already been confirmed"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to record scope confirmation: " + err.Error()})
+		return
+	}
+
 	if err := h.storage.Create(ctx, target); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create target: " + err.Error()})
 		return
 	}
-
-	_ = h.p8ScopeImportRepo.ConfirmImportReview(ctx, id, selectedRoot, target.ID)
 	rev.Status = "CONFIRMED"
 	rev.TargetID = target.ID
 	rev.SelectedRootDomain = selectedRoot

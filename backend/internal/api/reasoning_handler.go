@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/evidence"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/models"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/reasoning"
 )
@@ -182,16 +184,30 @@ func (h *Handler) UpdateHypothesisStatus(w http.ResponseWriter, r *http.Request)
 				Error(w, http.StatusBadRequest, "EVIDENCE_ASSET_MISMATCH", fmt.Sprintf("evidence '%s' asset '%s' is incompatible with hypothesis asset '%s'", eid, ev.AssetID, hyp.AssetID), "")
 				return
 			}
-			if ev.IntegrityHash == "" || len(ev.IntegrityHash) < 16 {
-				Error(w, http.StatusBadRequest, "EVIDENCE_INTEGRITY_INVALID", fmt.Sprintf("evidence '%s' has missing or invalid integrity hash", eid), "")
-				return
-			}
 			if ev.DataOrigin == "DEMO_SYNTHETIC" || ev.DataOrigin == "SIMULATED" {
 				Error(w, http.StatusBadRequest, "DEMO_EVIDENCE_NOT_ALLOWED", fmt.Sprintf("evidence '%s' has data_origin '%s'; demo or simulated evidence cannot support live hypotheses", eid, ev.DataOrigin), "")
 				return
 			}
 			if ev.VerificationStatus == "REJECTED" || ev.VerificationStatus == "DISMISSED" {
 				Error(w, http.StatusBadRequest, "EVIDENCE_STATE_NOT_SUPPORTABLE", fmt.Sprintf("evidence '%s' is in rejected/dismissed state '%s'", eid, ev.VerificationStatus), "")
+				return
+			}
+
+			// Recompute canonical SHA-256 hash and verify against persisted hash
+			canonicalizer := evidence.NewCanonicalizer()
+			tempCopy := *ev
+			recomputedHash, err := canonicalizer.CanonicalizeAndHash(&tempCopy)
+			if err != nil || recomputedHash == "" {
+				Error(w, http.StatusBadRequest, "EVIDENCE_INTEGRITY_INVALID", fmt.Sprintf("evidence '%s' canonical recomputation failed: %v", eid, err), "")
+				return
+			}
+
+			persistedHash := ev.SHA256
+			if persistedHash == "" {
+				persistedHash = ev.IntegrityHash
+			}
+			if persistedHash == "" || !strings.EqualFold(recomputedHash, persistedHash) {
+				Error(w, http.StatusBadRequest, "EVIDENCE_INTEGRITY_INVALID", fmt.Sprintf("evidence '%s' integrity mismatch: persisted '%s', computed '%s'", eid, persistedHash, recomputedHash), "")
 				return
 			}
 		}

@@ -12,12 +12,18 @@ import (
 )
 
 var (
-	ErrJobNotFound      = errors.New("scan job not found")
-	ErrInvalidState     = errors.New("invalid job state transition")
-	ErrMissingTarget    = errors.New("target id is required to create a scan job")
-	ErrMissingJobType   = errors.New("job type is required")
-	ErrTargetNotActive  = errors.New("cannot enqueue scan job for inactive or missing target")
+	ErrJobNotFound     = errors.New("scan job not found")
+	ErrInvalidState    = errors.New("invalid job state transition")
+	ErrMissingTarget   = errors.New("target id is required to create a scan job")
+	ErrMissingJobType  = errors.New("job type is required")
+	ErrTargetNotFound  = errors.New("associated target does not exist")
+	ErrTargetNotActive = errors.New("cannot execute scan job for inactive or archived target")
 )
+
+// TargetChecker checks if a target exists and is currently active.
+type TargetChecker interface {
+	GetByID(ctx context.Context, id string) (*models.Target, error)
+}
 
 // JobService specifies the lifecycle management interface for scan jobs.
 type JobService interface {
@@ -32,9 +38,10 @@ type JobService interface {
 
 // Manager implements JobService with in-memory persistence and event publishing.
 type Manager struct {
-	mu       sync.RWMutex
-	jobs     map[string]*models.ScanJob
-	eventBus events.EventBus
+	mu            sync.RWMutex
+	jobs          map[string]*models.ScanJob
+	eventBus      events.EventBus
+	targetChecker TargetChecker
 }
 
 // NewManager creates a new Job Manager instance.
@@ -43,6 +50,28 @@ func NewManager(eventBus events.EventBus) *Manager {
 		jobs:     make(map[string]*models.ScanJob),
 		eventBus: eventBus,
 	}
+}
+
+// SetTargetChecker registers a TargetChecker dependency for target activity verification.
+func (m *Manager) SetTargetChecker(checker TargetChecker) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.targetChecker = checker
+}
+
+// validateTargetActive checks target existence and active status.
+func (m *Manager) validateTargetActive(ctx context.Context, targetID string) error {
+	if m.targetChecker == nil {
+		return nil
+	}
+	target, err := m.targetChecker.GetByID(ctx, targetID)
+	if err != nil || target == nil {
+		return ErrTargetNotFound
+	}
+	if target.Status != models.TargetStatusActive {
+		return ErrTargetNotActive
+	}
+	return nil
 }
 
 // CreateJob enqueues a new scan job attributable to an explicit target.
@@ -54,11 +83,16 @@ func (m *Manager) CreateJob(ctx context.Context, targetID string, jobType string
 		return nil, ErrMissingJobType
 	}
 
+	if err := m.validateTargetActive(ctx, targetID); err != nil {
+		return nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	jobID := events.GenerateID("job")
 	now := time.Now().UTC()
+	corrID := events.GenerateID("corr")
 
 	if metadata == nil {
 		metadata = make(map[string]interface{})
@@ -77,20 +111,26 @@ func (m *Manager) CreateJob(ctx context.Context, targetID string, jobType string
 
 	if m.eventBus != nil {
 		_ = m.eventBus.Publish(ctx, models.Event{
+			EventID:   events.GenerateID("evt"),
 			EventType: models.EventJobCreated,
 			JobID:     job.ID,
 			TargetID:  job.TargetID,
 			Timestamp: now,
 			Payload: map[string]interface{}{
-				"job_id":   job.ID,
-				"type":     job.Type,
-				"status":   job.Status,
-				"metadata": metadata,
+				"job_id":         job.ID,
+				"target_id":      job.TargetID,
+				"timestamp":      now.Format(time.RFC3339),
+				"correlation_id": corrID,
+				"previous_state": "",
+				"new_state":      string(models.JobStatusQueued),
+				"job_type":       job.Type,
+				"metadata":       metadata,
 			},
 		})
 	}
 
-	return job, nil
+	copied := *job
+	return &copied, nil
 }
 
 // GetJob retrieves a scan job by its identifier.
@@ -102,7 +142,6 @@ func (m *Manager) GetJob(ctx context.Context, id string) (*models.ScanJob, error
 	if !exists {
 		return nil, ErrJobNotFound
 	}
-	// Return a copy to prevent mutation
 	copied := *job
 	return &copied, nil
 }
@@ -122,7 +161,7 @@ func (m *Manager) ListJobs(ctx context.Context, targetID string) ([]*models.Scan
 	return result, nil
 }
 
-// StartJob transitions a QUEUED job to RUNNING.
+// StartJob transitions a QUEUED job to RUNNING. Idempotent if already RUNNING.
 func (m *Manager) StartJob(ctx context.Context, id string) (*models.ScanJob, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -132,23 +171,42 @@ func (m *Manager) StartJob(ctx context.Context, id string) (*models.ScanJob, err
 		return nil, ErrJobNotFound
 	}
 
+	if err := m.validateTargetActive(ctx, job.TargetID); err != nil {
+		return nil, err
+	}
+
+	// Idempotency: duplicate start returns existing running job without state corruption
+	if job.Status == models.JobStatusRunning {
+		copied := *job
+		return &copied, nil
+	}
+
+	// Reject all invalid transitions (e.g. COMPLETED -> RUNNING, FAILED -> RUNNING, CANCELLED -> RUNNING)
 	if job.Status != models.JobStatusQueued {
 		return nil, fmt.Errorf("%w: cannot start job in state %s", ErrInvalidState, job.Status)
 	}
 
 	now := time.Now().UTC()
+	prevStatus := job.Status
 	job.Status = models.JobStatusRunning
 	job.StartedAt = &now
+	corrID := events.GenerateID("corr")
 
 	if m.eventBus != nil {
 		_ = m.eventBus.Publish(ctx, models.Event{
+			EventID:   events.GenerateID("evt"),
 			EventType: models.EventJobStarted,
 			JobID:     job.ID,
 			TargetID:  job.TargetID,
 			Timestamp: now,
 			Payload: map[string]interface{}{
-				"job_id": job.ID,
-				"status": job.Status,
+				"job_id":         job.ID,
+				"target_id":      job.TargetID,
+				"timestamp":      now.Format(time.RFC3339),
+				"correlation_id": corrID,
+				"previous_state": string(prevStatus),
+				"new_state":      string(models.JobStatusRunning),
+				"job_type":       job.Type,
 			},
 		})
 	}
@@ -157,7 +215,7 @@ func (m *Manager) StartJob(ctx context.Context, id string) (*models.ScanJob, err
 	return &copied, nil
 }
 
-// CompleteJob transitions a RUNNING job to COMPLETED.
+// CompleteJob transitions a RUNNING job to COMPLETED. Idempotent if already COMPLETED.
 func (m *Manager) CompleteJob(ctx context.Context, id string) (*models.ScanJob, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -167,23 +225,42 @@ func (m *Manager) CompleteJob(ctx context.Context, id string) (*models.ScanJob, 
 		return nil, ErrJobNotFound
 	}
 
+	if err := m.validateTargetActive(ctx, job.TargetID); err != nil {
+		return nil, err
+	}
+
+	// Idempotency: duplicate complete returns existing completed job
+	if job.Status == models.JobStatusCompleted {
+		copied := *job
+		return &copied, nil
+	}
+
+	// Reject invalid transitions (e.g. QUEUED -> COMPLETED, FAILED -> COMPLETED, CANCELLED -> COMPLETED)
 	if job.Status != models.JobStatusRunning {
 		return nil, fmt.Errorf("%w: cannot complete job in state %s", ErrInvalidState, job.Status)
 	}
 
 	now := time.Now().UTC()
+	prevStatus := job.Status
 	job.Status = models.JobStatusCompleted
 	job.CompletedAt = &now
+	corrID := events.GenerateID("corr")
 
 	if m.eventBus != nil {
 		_ = m.eventBus.Publish(ctx, models.Event{
+			EventID:   events.GenerateID("evt"),
 			EventType: models.EventJobCompleted,
 			JobID:     job.ID,
 			TargetID:  job.TargetID,
 			Timestamp: now,
 			Payload: map[string]interface{}{
-				"job_id": job.ID,
-				"status": job.Status,
+				"job_id":         job.ID,
+				"target_id":      job.TargetID,
+				"timestamp":      now.Format(time.RFC3339),
+				"correlation_id": corrID,
+				"previous_state": string(prevStatus),
+				"new_state":      string(models.JobStatusCompleted),
+				"job_type":       job.Type,
 			},
 		})
 	}
@@ -192,7 +269,8 @@ func (m *Manager) CompleteJob(ctx context.Context, id string) (*models.ScanJob, 
 	return &copied, nil
 }
 
-// FailJob transitions a job to FAILED with error documentation.
+// FailJob transitions a RUNNING job to FAILED with error documentation.
+// Rejects QUEUED -> FAILED, COMPLETED -> FAILED, CANCELLED -> FAILED.
 func (m *Manager) FailJob(ctx context.Context, id string, failureReason string) (*models.ScanJob, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -202,25 +280,44 @@ func (m *Manager) FailJob(ctx context.Context, id string, failureReason string) 
 		return nil, ErrJobNotFound
 	}
 
-	if job.Status == models.JobStatusCompleted || job.Status == models.JobStatusCancelled {
-		return nil, fmt.Errorf("%w: cannot fail job in terminal state %s", ErrInvalidState, job.Status)
+	if err := m.validateTargetActive(ctx, job.TargetID); err != nil {
+		return nil, err
+	}
+
+	// Idempotency: duplicate failure returns existing failed job
+	if job.Status == models.JobStatusFailed {
+		copied := *job
+		return &copied, nil
+	}
+
+	// Reject QUEUED -> FAILED, COMPLETED -> FAILED, CANCELLED -> FAILED
+	if job.Status != models.JobStatusRunning {
+		return nil, fmt.Errorf("%w: cannot fail job in state %s (must be RUNNING)", ErrInvalidState, job.Status)
 	}
 
 	now := time.Now().UTC()
+	prevStatus := job.Status
 	job.Status = models.JobStatusFailed
 	job.CompletedAt = &now
 	job.Error = failureReason
+	corrID := events.GenerateID("corr")
 
 	if m.eventBus != nil {
 		_ = m.eventBus.Publish(ctx, models.Event{
+			EventID:   events.GenerateID("evt"),
 			EventType: models.EventJobFailed,
 			JobID:     job.ID,
 			TargetID:  job.TargetID,
 			Timestamp: now,
 			Payload: map[string]interface{}{
-				"job_id": job.ID,
-				"status": job.Status,
-				"error":  failureReason,
+				"job_id":         job.ID,
+				"target_id":      job.TargetID,
+				"timestamp":      now.Format(time.RFC3339),
+				"correlation_id": corrID,
+				"previous_state": string(prevStatus),
+				"new_state":      string(models.JobStatusFailed),
+				"job_type":       job.Type,
+				"error":          failureReason,
 			},
 		})
 	}
@@ -230,6 +327,7 @@ func (m *Manager) FailJob(ctx context.Context, id string, failureReason string) 
 }
 
 // CancelJob transitions an active (QUEUED or RUNNING) job to CANCELLED.
+// Rejects terminal states: COMPLETED -> CANCELLED, FAILED -> CANCELLED.
 func (m *Manager) CancelJob(ctx context.Context, id string) (*models.ScanJob, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -239,13 +337,45 @@ func (m *Manager) CancelJob(ctx context.Context, id string) (*models.ScanJob, er
 		return nil, ErrJobNotFound
 	}
 
-	if job.Status == models.JobStatusCompleted || job.Status == models.JobStatusFailed || job.Status == models.JobStatusCancelled {
+	if err := m.validateTargetActive(ctx, job.TargetID); err != nil {
+		return nil, err
+	}
+
+	// Idempotency: duplicate cancel returns existing cancelled job
+	if job.Status == models.JobStatusCancelled {
+		copied := *job
+		return &copied, nil
+	}
+
+	// Reject cancelling terminal jobs
+	if job.Status == models.JobStatusCompleted || job.Status == models.JobStatusFailed {
 		return nil, fmt.Errorf("%w: cannot cancel job in terminal state %s", ErrInvalidState, job.Status)
 	}
 
 	now := time.Now().UTC()
+	prevStatus := job.Status
 	job.Status = models.JobStatusCancelled
 	job.CompletedAt = &now
+	corrID := events.GenerateID("corr")
+
+	if m.eventBus != nil {
+		_ = m.eventBus.Publish(ctx, models.Event{
+			EventID:   events.GenerateID("evt"),
+			EventType: models.EventJobCancelled,
+			JobID:     job.ID,
+			TargetID:  job.TargetID,
+			Timestamp: now,
+			Payload: map[string]interface{}{
+				"job_id":         job.ID,
+				"target_id":      job.TargetID,
+				"timestamp":      now.Format(time.RFC3339),
+				"correlation_id": corrID,
+				"previous_state": string(prevStatus),
+				"new_state":      string(models.JobStatusCancelled),
+				"job_type":       job.Type,
+			},
+		})
+	}
 
 	copied := *job
 	return &copied, nil

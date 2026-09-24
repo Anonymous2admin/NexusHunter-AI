@@ -8,8 +8,9 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("record not found")
-	ErrConflict = errors.New("record already exists")
+	ErrNotFound     = errors.New("record not found")
+	ErrConflict     = errors.New("record already exists")
+	ErrInvalidState = errors.New("invalid state transition or record already confirmed")
 )
 
 // TargetRepository specifies storage operations for authorized research targets.

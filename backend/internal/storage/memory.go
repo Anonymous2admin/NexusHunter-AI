@@ -2159,6 +2159,9 @@ func (m *MemoryStorage) ConfirmImportReview(ctx context.Context, id string, sele
 	if !exists {
 		return ErrNotFound
 	}
+	if rev.Status == "CONFIRMED" {
+		return ErrInvalidState
+	}
 	now := time.Now().UTC()
 	rev.Status = "CONFIRMED"
 	rev.SelectedRootDomain = selectedRootDomain

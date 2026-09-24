@@ -347,7 +347,19 @@ func (h *Handler) StartJob(w http.ResponseWriter, r *http.Request) {
 			Error(w, http.StatusNotFound, "JOB_NOT_FOUND", "scan job not found", id)
 			return
 		}
-		Error(w, http.StatusBadRequest, "INVALID_STATE_TRANSITION", err.Error(), id)
+		if errors.Is(err, jobs.ErrTargetNotFound) {
+			Error(w, http.StatusNotFound, "TARGET_NOT_FOUND", "associated target does not exist", id)
+			return
+		}
+		if errors.Is(err, jobs.ErrTargetNotActive) {
+			Error(w, http.StatusBadRequest, "TARGET_NOT_ACTIVE", "cannot execute scan job for inactive or archived target", id)
+			return
+		}
+		if errors.Is(err, jobs.ErrInvalidState) {
+			Error(w, http.StatusConflict, "INVALID_STATE_TRANSITION", err.Error(), id)
+			return
+		}
+		Error(w, http.StatusBadRequest, "BAD_REQUEST", err.Error(), id)
 		return
 	}
 	Success(w, http.StatusOK, job)
@@ -369,7 +381,19 @@ func (h *Handler) CompleteJob(w http.ResponseWriter, r *http.Request) {
 			Error(w, http.StatusNotFound, "JOB_NOT_FOUND", "scan job not found", id)
 			return
 		}
-		Error(w, http.StatusBadRequest, "INVALID_STATE_TRANSITION", err.Error(), id)
+		if errors.Is(err, jobs.ErrTargetNotFound) {
+			Error(w, http.StatusNotFound, "TARGET_NOT_FOUND", "associated target does not exist", id)
+			return
+		}
+		if errors.Is(err, jobs.ErrTargetNotActive) {
+			Error(w, http.StatusBadRequest, "TARGET_NOT_ACTIVE", "cannot execute scan job for inactive or archived target", id)
+			return
+		}
+		if errors.Is(err, jobs.ErrInvalidState) {
+			Error(w, http.StatusConflict, "INVALID_STATE_TRANSITION", err.Error(), id)
+			return
+		}
+		Error(w, http.StatusBadRequest, "BAD_REQUEST", err.Error(), id)
 		return
 	}
 	Success(w, http.StatusOK, job)
@@ -403,7 +427,19 @@ func (h *Handler) FailJob(w http.ResponseWriter, r *http.Request) {
 			Error(w, http.StatusNotFound, "JOB_NOT_FOUND", "scan job not found", id)
 			return
 		}
-		Error(w, http.StatusBadRequest, "INVALID_STATE_TRANSITION", err.Error(), id)
+		if errors.Is(err, jobs.ErrTargetNotFound) {
+			Error(w, http.StatusNotFound, "TARGET_NOT_FOUND", "associated target does not exist", id)
+			return
+		}
+		if errors.Is(err, jobs.ErrTargetNotActive) {
+			Error(w, http.StatusBadRequest, "TARGET_NOT_ACTIVE", "cannot execute scan job for inactive or archived target", id)
+			return
+		}
+		if errors.Is(err, jobs.ErrInvalidState) {
+			Error(w, http.StatusConflict, "INVALID_STATE_TRANSITION", err.Error(), id)
+			return
+		}
+		Error(w, http.StatusBadRequest, "BAD_REQUEST", err.Error(), id)
 		return
 	}
 	Success(w, http.StatusOK, job)
@@ -425,7 +461,19 @@ func (h *Handler) CancelJob(w http.ResponseWriter, r *http.Request) {
 			Error(w, http.StatusNotFound, "JOB_NOT_FOUND", "scan job not found", id)
 			return
 		}
-		Error(w, http.StatusBadRequest, "INVALID_STATE_TRANSITION", err.Error(), id)
+		if errors.Is(err, jobs.ErrTargetNotFound) {
+			Error(w, http.StatusNotFound, "TARGET_NOT_FOUND", "associated target does not exist", id)
+			return
+		}
+		if errors.Is(err, jobs.ErrTargetNotActive) {
+			Error(w, http.StatusBadRequest, "TARGET_NOT_ACTIVE", "cannot execute scan job for inactive or archived target", id)
+			return
+		}
+		if errors.Is(err, jobs.ErrInvalidState) {
+			Error(w, http.StatusConflict, "INVALID_STATE_TRANSITION", err.Error(), id)
+			return
+		}
+		Error(w, http.StatusBadRequest, "BAD_REQUEST", err.Error(), id)
 		return
 	}
 	Success(w, http.StatusOK, job)

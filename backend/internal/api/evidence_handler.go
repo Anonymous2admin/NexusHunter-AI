@@ -30,6 +30,26 @@ func (h *Handler) RecordEvidence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.AssetID == "" {
+		Error(w, http.StatusBadRequest, "INVALID_REQUEST", "asset_id is required: explicit asset selection is mandatory", "")
+		return
+	}
+
+	if req.Summary == "" {
+		Error(w, http.StatusBadRequest, "INVALID_REQUEST", "summary is required: describe the observed security behavior", "")
+		return
+	}
+
+	if req.Request == nil || req.Request.URL == "" {
+		Error(w, http.StatusBadRequest, "INVALID_REQUEST", "request URL is required: observed URL must be explicit", "")
+		return
+	}
+
+	// Always clear client-supplied hashes to ensure backend authority
+	req.SHA256 = ""
+	req.IntegrityHash = ""
+	req.CanonicalRepresentation = ""
+
 	// 1. Server-side validation: TargetID must exist
 	var target *models.Target
 	if h.storage != nil {
