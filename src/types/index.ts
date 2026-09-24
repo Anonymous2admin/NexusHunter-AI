@@ -46,7 +46,7 @@ export interface SystemEvent {
 export interface HealthResponse {
   status: string;
   service: string;
-  mode?: 'LIVE' | 'DEMO_FALLBACK' | 'OFFLINE';
+  mode?: 'LIVE' | 'DEMO_FALLBACK' | 'OFFLINE' | 'PARTIAL' | string;
   time?: string;
 }
 
@@ -940,7 +940,7 @@ export interface InvestigationStep {
   result_summary?: string;
 }
 
-export type InvestigationStatus = 'PLANNED' | 'RUNNING' | 'COMPLETED' | 'CANCELLED' | 'BLOCKED';
+export type InvestigationStatus = 'PLANNED' | 'RUNNING' | 'COMPLETED' | 'CANCELLED' | 'BLOCKED' | 'SIMULATED';
 
 export interface Investigation {
   id: string;
@@ -954,6 +954,7 @@ export interface Investigation {
   priority_score: number;
   priority_factors?: Record<string, number>;
   status: InvestigationStatus;
+  data_origin?: 'LIVE_BACKEND' | 'DEMO_SYNTHETIC' | 'SIMULATED' | 'UNVERIFIED';
   steps: InvestigationStep[];
   created_by: string;
   created_at: string;
@@ -1022,11 +1023,13 @@ export interface SecurityControlRecord {
 // Phase 8.2R: UI Truth Layer & Runtime Integrity
 // ==========================================
 
-export type RuntimeMode = 'LIVE' | 'DEMO' | 'OFFLINE' | 'PARTIAL';
+export type RuntimeMode = 'LIVE' | 'DEMO' | 'OFFLINE' | 'PARTIAL' | 'UNKNOWN';
+
+export type RequestState = 'IDLE' | 'LOADING' | 'SUCCESS_DATA' | 'SUCCESS_EMPTY' | 'ERROR' | 'OFFLINE' | 'PARTIAL';
 
 export type RequestStatus = 'IDLE' | 'LOADING' | 'SUCCESS' | 'ERROR' | 'OFFLINE';
 
-export type DataOrigin = 'LIVE_BACKEND' | 'DEMO_SYNTHETIC' | 'DERIVED' | 'SIMULATED' | 'OFFLINE';
+export type DataOrigin = 'LIVE_BACKEND' | 'DEMO_SYNTHETIC' | 'DERIVED' | 'SIMULATED' | 'OFFLINE' | 'UNVERIFIED';
 
 export interface DataResponse<T> {
   status: RequestStatus;
@@ -1091,6 +1094,8 @@ export interface ScopeImportReview {
   normalization_manifest_sha256: string;
   selection_reason?: string;
   target_id?: string;
+  confirmed_by?: string;
+  source_import_id?: string;
   created_at: string;
   confirmed_at?: string;
 }

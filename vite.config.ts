@@ -1922,7 +1922,7 @@ function nexusApiPlugin(): Plugin {
         }
 
         // 5. /api/jobs
-        if (url.startsWith('/api/jobs')) {
+        if (url === '/api/jobs' || url.startsWith('/api/jobs?')) {
           if (req.method === 'GET') {
             res.statusCode = 200;
             return res.end(JSON.stringify(jobsStore));
@@ -1963,8 +1963,114 @@ function nexusApiPlugin(): Plugin {
               timestamp: new Date().toISOString(),
             });
             res.statusCode = 201;
-            return res.end(JSON.stringify({ success: true, data: newJob }));
+            return res.end(JSON.stringify(newJob));
           }
+        }
+
+        // 5a. POST /api/jobs/:id/start
+        const jobStartMatch = url.match(/^\/api\/jobs\/([^\/?]+)\/start$/);
+        if (jobStartMatch && req.method === 'POST') {
+          const jobId = jobStartMatch[1];
+          const job = jobsStore.find((j) => j.id === jobId);
+          if (!job) {
+            res.statusCode = 404;
+            return res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Scan job not found' } }));
+          }
+          if (job.status !== 'QUEUED') {
+            res.statusCode = 400;
+            return res.end(JSON.stringify({ error: { code: 'INVALID_STATE', message: `Cannot start job in state ${job.status}` } }));
+          }
+          job.status = 'RUNNING';
+          job.started_at = new Date().toISOString();
+          eventsStore.unshift({
+            event_id: `evt-${Date.now().toString(36)}`,
+            event_type: 'JOB_STARTED',
+            job_id: job.id,
+            target_id: job.target_id,
+            timestamp: new Date().toISOString(),
+          });
+          res.statusCode = 200;
+          return res.end(JSON.stringify(job));
+        }
+
+        // 5b. POST /api/jobs/:id/complete
+        const jobCompleteMatch = url.match(/^\/api\/jobs\/([^\/?]+)\/complete$/);
+        if (jobCompleteMatch && req.method === 'POST') {
+          const jobId = jobCompleteMatch[1];
+          const job = jobsStore.find((j) => j.id === jobId);
+          if (!job) {
+            res.statusCode = 404;
+            return res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Scan job not found' } }));
+          }
+          if (job.status !== 'RUNNING') {
+            res.statusCode = 400;
+            return res.end(JSON.stringify({ error: { code: 'INVALID_STATE', message: `Cannot complete job in state ${job.status}` } }));
+          }
+          job.status = 'COMPLETED';
+          job.completed_at = new Date().toISOString();
+          eventsStore.unshift({
+            event_id: `evt-${Date.now().toString(36)}`,
+            event_type: 'JOB_COMPLETED',
+            job_id: job.id,
+            target_id: job.target_id,
+            timestamp: new Date().toISOString(),
+          });
+          res.statusCode = 200;
+          return res.end(JSON.stringify(job));
+        }
+
+        // 5c. POST /api/jobs/:id/fail
+        const jobFailMatch = url.match(/^\/api\/jobs\/([^\/?]+)\/fail$/);
+        if (jobFailMatch && req.method === 'POST') {
+          const jobId = jobFailMatch[1];
+          const body = await readBody();
+          const job = jobsStore.find((j) => j.id === jobId);
+          if (!job) {
+            res.statusCode = 404;
+            return res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Scan job not found' } }));
+          }
+          if (job.status === 'COMPLETED' || job.status === 'CANCELLED') {
+            res.statusCode = 400;
+            return res.end(JSON.stringify({ error: { code: 'INVALID_STATE', message: `Cannot fail job in terminal state ${job.status}` } }));
+          }
+          job.status = 'FAILED';
+          job.completed_at = new Date().toISOString();
+          job.error = body.failure_reason || 'Scan job execution encountered failure';
+          eventsStore.unshift({
+            event_id: `evt-${Date.now().toString(36)}`,
+            event_type: 'JOB_FAILED',
+            job_id: job.id,
+            target_id: job.target_id,
+            timestamp: new Date().toISOString(),
+          });
+          res.statusCode = 200;
+          return res.end(JSON.stringify(job));
+        }
+
+        // 5d. POST /api/jobs/:id/cancel
+        const jobCancelMatch = url.match(/^\/api\/jobs\/([^\/?]+)\/cancel$/);
+        if (jobCancelMatch && req.method === 'POST') {
+          const jobId = jobCancelMatch[1];
+          const job = jobsStore.find((j) => j.id === jobId);
+          if (!job) {
+            res.statusCode = 404;
+            return res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Scan job not found' } }));
+          }
+          if (job.status === 'COMPLETED' || job.status === 'FAILED' || job.status === 'CANCELLED') {
+            res.statusCode = 400;
+            return res.end(JSON.stringify({ error: { code: 'INVALID_STATE', message: `Cannot cancel job in terminal state ${job.status}` } }));
+          }
+          job.status = 'CANCELLED';
+          job.completed_at = new Date().toISOString();
+          eventsStore.unshift({
+            event_id: `evt-${Date.now().toString(36)}`,
+            event_type: 'JOB_CANCELLED',
+            job_id: job.id,
+            target_id: job.target_id,
+            timestamp: new Date().toISOString(),
+          });
+          res.statusCode = 200;
+          return res.end(JSON.stringify(job));
         }
 
         // 6. POST /api/scope/verify (Fail-closed matching internal/scope in Go)
@@ -2553,30 +2659,54 @@ function nexusApiPlugin(): Plugin {
             }
           }
 
+          if (!body.asset_id) {
+            res.statusCode = 400;
+            return res.end(
+              JSON.stringify({
+                error: {
+                  code: 'INVALID_ASSET',
+                  message: 'asset_id is required; cannot record evidence without attributable asset',
+                },
+              })
+            );
+          }
+
+          const bodySnippet = body.response?.body_snippet || '';
+          const backendBodyHash = crypto.createHash('sha256').update(bodySnippet).digest('hex');
+
           const canonicalData = {
             target_id: target.id,
-            asset_id: body.asset_id || '',
+            asset_id: body.asset_id,
             evidence_type: body.evidence_type || 'HTTP_RESPONSE',
             status_code: Number(body.status_code) || 200,
             summary: body.summary || '',
             url: body.request?.url || '',
-            body_snippet: body.response?.body_snippet || '',
+            body_snippet: bodySnippet,
           };
           const canonicalStr = JSON.stringify(canonicalData);
           const computedHash = crypto.createHash('sha256').update(canonicalStr).digest('hex');
 
+          const serverResponse = {
+            ...(body.response || {}),
+            status_code: Number(body.status_code) || 200,
+            body_snippet: bodySnippet,
+            body_length: Buffer.byteLength(bodySnippet, 'utf8'),
+            body_hash: backendBodyHash,
+          };
+
           const newEv = {
             id: `ev-${Date.now().toString(36)}`,
             target_id: target.id,
-            asset_id: body.asset_id || 'ast-01',
+            asset_id: body.asset_id,
             source: body.source || 'MANUAL_PROBE',
             evidence_type: body.evidence_type || 'HTTP_RESPONSE',
             summary: body.summary || 'User-recorded security evidence item',
             captured_at: new Date().toISOString(),
             status_code: Number(body.status_code) || 200,
             request: body.request,
-            response: body.response,
+            response: serverResponse,
             relevant_headers: body.relevant_headers,
+            integrity_hash: computedHash,
             scope_decision: {
               is_in_scope: true,
               target_id: target.id,
@@ -2795,6 +2925,17 @@ function nexusApiPlugin(): Plugin {
         // 40. POST /api/contradictions/evaluate
         if (url === '/api/contradictions/evaluate' && req.method === 'POST') {
           const body = await readBody();
+          if (!body.target_id || !body.asset_id || !body.endpoint) {
+            res.statusCode = 400;
+            return res.end(
+              JSON.stringify({
+                error: {
+                  code: 'INVALID_EVIDENCE_CONTEXT',
+                  message: 'target_id, asset_id, and endpoint are required; cannot invent security context',
+                },
+              })
+            );
+          }
           const exp = body.expectation || {};
           const observed = body.observed_state || 'UNKNOWN';
 
@@ -3076,6 +3217,55 @@ function nexusApiPlugin(): Plugin {
                   message: 'cannot transition to SUPPORTED while falsification conditions remain unevaluated',
                 },
               }));
+            }
+
+            for (const eid of hyp.supporting_evidence) {
+              const ev = evidenceRecordsStore.find((e) => e.id === eid);
+              if (!ev) {
+                res.statusCode = 400;
+                return res.end(JSON.stringify({
+                  error: {
+                    code: 'EVIDENCE_NOT_FOUND',
+                    message: `supporting evidence '${eid}' does not exist in store`,
+                  },
+                }));
+              }
+              if (ev.target_id !== hyp.target_id) {
+                res.statusCode = 400;
+                return res.end(JSON.stringify({
+                  error: {
+                    code: 'EVIDENCE_TARGET_MISMATCH',
+                    message: `evidence '${eid}' target '${ev.target_id}' does not match hypothesis target '${hyp.target_id}'`,
+                  },
+                }));
+              }
+              if (hyp.asset_id && ev.asset_id && ev.asset_id !== hyp.asset_id) {
+                res.statusCode = 400;
+                return res.end(JSON.stringify({
+                  error: {
+                    code: 'EVIDENCE_ASSET_MISMATCH',
+                    message: `evidence '${eid}' asset '${ev.asset_id}' is incompatible with hypothesis asset '${hyp.asset_id}'`,
+                  },
+                }));
+              }
+              if (!ev.integrity_hash && !ev.sha256) {
+                res.statusCode = 400;
+                return res.end(JSON.stringify({
+                  error: {
+                    code: 'EVIDENCE_INTEGRITY_INVALID',
+                    message: `evidence '${eid}' has missing or invalid integrity hash`,
+                  },
+                }));
+              }
+              if (ev.data_origin === 'DEMO_SYNTHETIC' || ev.data_origin === 'SIMULATED') {
+                res.statusCode = 400;
+                return res.end(JSON.stringify({
+                  error: {
+                    code: 'DEMO_EVIDENCE_NOT_ALLOWED',
+                    message: `evidence '${eid}' has data_origin '${ev.data_origin}'; demo or simulated evidence cannot support live hypotheses`,
+                  },
+                }));
+              }
             }
           }
 
@@ -3426,11 +3616,51 @@ function nexusApiPlugin(): Plugin {
         // 67. POST /api/reasoning/ai-assist
         if (url === '/api/reasoning/ai-assist' && req.method === 'POST') {
           const body = await readBody();
+          const evidenceIds = body.evidence_ids || [];
+          const validEvidence = [];
+
+          for (const eid of evidenceIds) {
+            const ev = evidenceRecordsStore.find((e) => e.id === eid);
+            if (!ev) {
+              res.statusCode = 400;
+              return res.end(
+                JSON.stringify({
+                  error: {
+                    code: 'INVALID_EVIDENCE_CITATION',
+                    message: `Evidence ID '${eid}' does not exist in store. Untrusted citation rejected.`,
+                  },
+                })
+              );
+            }
+            if (ev.target_id !== body.target_id) {
+              res.statusCode = 400;
+              return res.end(
+                JSON.stringify({
+                  error: {
+                    code: 'CITATION_TARGET_MISMATCH',
+                    message: `Evidence ID '${eid}' belongs to target '${ev.target_id}', not requested target '${body.target_id}'. Cross-target citation rejected.`,
+                  },
+                })
+              );
+            }
+            validEvidence.push(ev);
+          }
+
+          const hasValidCitations = validEvidence.length > 0;
           const resPayload = {
+            feature_name: 'Evidence-Grounded Reasoning Guidance',
+            target_id: body.target_id,
             hypothesis_id: body.hypothesis_id,
-            reasoning_summary: 'Analysis grounded strictly in empirical evidence and falsification criteria.',
+            cited_evidence_count: validEvidence.length,
+            epistemic_guardrail: 'STRICT_EVIDENTIARY_GROUNDING',
+            quarantined_input: {
+              prompt_sanitized: String(body.prompt || '').replace(/\0/g, ''),
+              trust_boundary: 'UNTRUSTED_EXTERNAL_INPUT_QUARANTINED',
+            },
+            analysis_summary: 'Analysis grounded strictly in verified empirical evidence and falsification criteria.',
             epistemic_evaluation: 'Observed unauthenticated token issuance deviates from expected OAuth policy. However, per strict epistemic rule, absence of Authorization header validation does not conclusively prove privilege escalation until token scopes are empirically tested downstream.',
-            suggested_falsifiers: [
+            suggested_falsification: 'Submit emitted token to /api/v1/user and record HTTP status code',
+            suggested_missing_evidence: [
               'Submit emitted token to /api/v1/user and record HTTP status code',
               'Verify JWKS public key signature offline',
             ],
@@ -3438,7 +3668,8 @@ function nexusApiPlugin(): Plugin {
               'Intended guest token issuance with zero elevated permissions',
               'Internal debugging bypass deployed without WAF header filter',
             ],
-            confidence_level: 'MODERATE_CONFIDENCE',
+            confidence_level: hasValidCitations ? 'MODERATE_CONFIDENCE' : 'UNVERIFIED',
+            hallucination_check: hasValidCitations ? 'PASSED_ZERO_UNSUPPORTED_CLAIMS' : 'UNVERIFIED_NO_EVIDENCE_CITATIONS',
             evaluated_at: new Date().toISOString(),
           };
           res.statusCode = 200;
@@ -3619,9 +3850,22 @@ function nexusApiPlugin(): Plugin {
             res.statusCode = 404;
             return res.end(JSON.stringify({ error: 'scope review not found' }));
           }
+          if (!body.selected_root_domain || typeof body.selected_root_domain !== 'string' || body.selected_root_domain.trim() === '') {
+            res.statusCode = 400;
+            return res.end(
+              JSON.stringify({
+                error: {
+                  code: 'ROOT_DOMAIN_REQUIRED',
+                  message: 'Explicit human selection of root domain is required. Never infer selection.',
+                },
+              })
+            );
+          }
           review.status = 'CONFIRMED';
+          review.selected_root_domain = body.selected_root_domain.trim();
+          review.confirmed_by = body.confirmed_by || 'SECURITY_ANALYST';
           review.confirmed_at = new Date().toISOString();
-          review.selected_root_domain = body.selected_root_domain || review.selected_root_domain || 'example.com';
+          review.source_import_id = review.id;
           res.statusCode = 200;
           return res.end(JSON.stringify(review));
         }

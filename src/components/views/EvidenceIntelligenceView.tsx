@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   FileText,
   Shield,
@@ -9,6 +9,7 @@ import {
   Clock,
   CheckCircle2,
   AlertTriangle,
+  AlertCircle,
   Lock,
   Eye,
   EyeOff,
@@ -37,6 +38,8 @@ import {
   EpistemicObservationState,
   ContradictionStatus,
   EvidenceIntegrityResult,
+  RequestState,
+  Asset,
 } from '../../types';
 import { api } from '../../lib/api';
 import { useRuntime } from '../../context/RuntimeContext';
@@ -107,13 +110,20 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
     }
   };
 
+  // Request State & Target Integrity (Phase 8.2R-FINAL.1)
+  const [fetchStatus, setFetchStatus] = useState<RequestState>('IDLE');
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [targetAssets, setTargetAssets] = useState<Asset[]>([]);
+  const activeRequestIdRef = useRef<string>('');
+
   // Record New Evidence Modal
   const [showRecordModal, setShowRecordModal] = useState(false);
   const [recordForm, setRecordForm] = useState({
     summary: '',
+    asset_id: '',
     evidence_type: 'HTTP_RESPONSE',
     source: 'MANUAL_PROBE',
-    url: 'https://api.example.com/v1/auth/token',
+    url: 'https://example.com/v1/auth/token',
     method: 'GET',
     status_code: 200,
     headers: 'Content-Type: application/json\nAccess-Control-Allow-Origin: *',
@@ -127,19 +137,39 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
 
   const loadAllData = async (targetId: string, silent = false) => {
     if (!targetId) return;
-    if (!silent) setIsLoading(true);
-    else setIsRefreshing(true);
+    const currentReqId = `${targetId}-${Date.now()}`;
+    activeRequestIdRef.current = currentReqId;
+
+    if (!silent) {
+      setIsLoading(true);
+      setFetchStatus('LOADING');
+      setFetchError(null);
+    } else {
+      setIsRefreshing(true);
+    }
 
     try {
+      // 1. Authoritative asset resolution for active target (no hardcoded assets)
+      const assets = await api.getTargetAssets(targetId);
+      if (activeRequestIdRef.current !== currentReqId) return; // Stale target response rejected
+      setTargetAssets(assets || []);
+
+      const primaryAsset = assets && assets.length > 0 ? assets[0] : null;
+
+      // 2. Authoritative parallel fetch with explicit error propagation
       const [evs, diffs, exps, cons, outs, tl, interest] = await Promise.all([
-        api.getTargetEvidence(targetId).catch(() => []),
-        api.getTargetDiffs(targetId).catch(() => []),
-        api.getTargetExpectations(targetId).catch(() => []),
-        api.getTargetContradictions(targetId).catch(() => []),
-        api.getTargetOutliers(targetId).catch(() => []),
-        api.getEvidenceTimeline(targetId).catch(() => []),
-        api.getAssetInterest(targetId, 'ast-02', 'api.example.com').catch(() => null),
+        api.getTargetEvidence(targetId),
+        api.getTargetDiffs(targetId),
+        api.getTargetExpectations(targetId),
+        api.getTargetContradictions(targetId),
+        api.getTargetOutliers(targetId),
+        api.getEvidenceTimeline(targetId),
+        primaryAsset
+          ? api.getAssetInterest(targetId, primaryAsset.id, primaryAsset.hostname)
+          : Promise.resolve(null),
       ]);
+
+      if (activeRequestIdRef.current !== currentReqId) return; // Stale target response rejected
 
       setEvidenceList(evs || []);
       setDiffsList(diffs || []);
@@ -159,14 +189,42 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
       if (evs && evs.length > 0) {
         setEvalEvidenceRef(evs[0]?.id || '');
       }
+
+      setFetchStatus(evs && evs.length > 0 ? 'SUCCESS_DATA' : 'SUCCESS_EMPTY');
+      setFetchError(null);
+    } catch (err: any) {
+      if (activeRequestIdRef.current !== currentReqId) return;
+      console.error('Evidence data load failure:', err);
+      setFetchStatus('ERROR');
+      setFetchError(err.message || 'Failed to retrieve authoritative evidence state from backend.');
     } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
+      if (activeRequestIdRef.current === currentReqId) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
     }
   };
 
   useEffect(() => {
     if (activeTarget?.id) {
+      // Step 1: Immediately clear previous target state (Item 11: Target Switch Safety)
+      setEvidenceList([]);
+      setDiffsList([]);
+      setExpectationsList([]);
+      setContradictionsList([]);
+      setOutliersList([]);
+      setTimelineEvents([]);
+      setInterestSummary(null);
+      setTargetAssets([]);
+      setSelectedEvidence(null);
+      setSelectedDiff(null);
+      setDiffEvidenceA('');
+      setDiffEvidenceB('');
+      setEvalExpectationId('');
+      setEvalEvidenceRef('');
+      setFetchError(null);
+
+      // Step 2: Query authoritative data for target
       loadAllData(activeTarget.id);
     }
   }, [activeTarget?.id]);
@@ -198,10 +256,19 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
     try {
       assertLiveOrThrow('evaluate security contradiction');
       const exp = expectationsList.find((e) => e.id === evalExpectationId);
+      const targetAssetId = exp?.asset_id || targetAssets[0]?.id;
+      const targetEndpoint =
+        exp?.endpoint ||
+        (activeTarget?.root_domain ? `https://${activeTarget.root_domain}/v1/auth/token` : '/v1/auth/token');
+
+      if (!targetAssetId) {
+        throw new Error('Evaluation rejected: No target asset available for contradiction analysis.');
+      }
+
       const res = await api.evaluateContradiction({
         target_id: activeTarget.id,
-        asset_id: exp?.asset_id || 'ast-02',
-        endpoint: exp?.endpoint || '/v1/auth/token',
+        asset_id: targetAssetId,
+        endpoint: targetEndpoint,
         expectation: exp,
         observed_state: evalObservedState,
         evidence_refs: evalEvidenceRef ? [evalEvidenceRef] : [],
@@ -237,10 +304,16 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
     }
   };
 
-  // Handle Record New Evidence
+  // Handle Record New Evidence (Backend-authoritative SHA-256 and body hash)
   const handleCreateEvidence = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!recordForm.summary) return;
+
+    const chosenAssetId = recordForm.asset_id || targetAssets[0]?.id;
+    if (!chosenAssetId) {
+      showRuntimeError('Cannot record evidence: Target has no attributed assets available.');
+      return;
+    }
 
     let parsedHeaders: Record<string, string> = {};
     recordForm.headers.split('\n').forEach((line) => {
@@ -252,7 +325,7 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
 
     const payload = {
       target_id: activeTarget.id,
-      asset_id: 'ast-02',
+      asset_id: chosenAssetId,
       source: recordForm.source,
       evidence_type: recordForm.evidence_type,
       summary: recordForm.summary,
@@ -272,7 +345,6 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
         headers: parsedHeaders,
         body_snippet: recordForm.body,
         body_length: recordForm.body.length,
-        body_hash: 'sha256-demo-' + Math.random().toString(16).substring(2, 10),
         content_type: parsedHeaders['Content-Type'] || 'application/json',
         response_time_ms: 95,
       },
@@ -287,9 +359,10 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
         setShowRecordModal(false);
         setRecordForm({
           summary: '',
+          asset_id: chosenAssetId,
           evidence_type: 'HTTP_RESPONSE',
           source: 'MANUAL_PROBE',
-          url: 'https://api.example.com/v1/auth/token',
+          url: `https://${activeTarget?.root_domain || 'example.com'}/v1/auth/token`,
           method: 'GET',
           status_code: 200,
           headers: 'Content-Type: application/json\nAccess-Control-Allow-Origin: *',
@@ -386,6 +459,30 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
           </div>
         </div>
       </div>
+
+      {/* Real Error State (Phase 8.2R-FINAL.1) */}
+      {fetchStatus === 'ERROR' && (
+        <div
+          role="alert"
+          className="rounded-xl border border-rose-700 bg-rose-950/80 p-4 text-xs font-mono text-rose-200 flex flex-wrap items-center justify-between gap-3 shadow-lg"
+        >
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <AlertCircle className="h-5 w-5 text-rose-400 shrink-0" />
+            <div>
+              <span className="font-bold text-white uppercase tracking-wider mr-2">
+                [BACKEND QUERY FAILURE]:
+              </span>
+              <span className="text-rose-200 break-words">{fetchError}</span>
+            </div>
+          </div>
+          <button
+            onClick={() => activeTarget?.id && loadAllData(activeTarget.id)}
+            className="px-3 py-1.5 rounded-lg bg-rose-900 border border-rose-600 hover:bg-rose-800 text-white font-sans text-xs font-semibold shrink-0"
+          >
+            Retry Query
+          </button>
+        </div>
+      )}
 
       {/* Metrics Row */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -1311,6 +1408,27 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
             </div>
 
             <form onSubmit={handleCreateEvidence} className="space-y-3 text-xs">
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">Target Asset Attribution</label>
+                {targetAssets.length > 0 ? (
+                  <select
+                    value={recordForm.asset_id || targetAssets[0]?.id || ''}
+                    onChange={(e) => setRecordForm({ ...recordForm, asset_id: e.target.value })}
+                    className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-slate-200 focus:border-indigo-500 focus:outline-hidden"
+                  >
+                    {targetAssets.map((ast) => (
+                      <option key={ast.id} value={ast.id}>
+                        {ast.hostname || ast.id} ({ast.id})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="text-amber-400 bg-amber-950/40 border border-amber-800/50 rounded p-2 text-xs">
+                    No assets discovered for target yet. Run recon or register an asset before attributing evidence.
+                  </div>
+                )}
+              </div>
+
               <div>
                 <label className="block text-slate-300 font-semibold mb-1">Summary Description</label>
                 <input

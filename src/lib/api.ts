@@ -219,6 +219,31 @@ class ApiClient {
     });
   }
 
+  async startJob(id: string): Promise<ScanJob> {
+    return this.request<ScanJob>(`/api/jobs/${encodeURIComponent(id)}/start`, {
+      method: 'POST',
+    });
+  }
+
+  async completeJob(id: string): Promise<ScanJob> {
+    return this.request<ScanJob>(`/api/jobs/${encodeURIComponent(id)}/complete`, {
+      method: 'POST',
+    });
+  }
+
+  async failJob(id: string, failureReason: string): Promise<ScanJob> {
+    return this.request<ScanJob>(`/api/jobs/${encodeURIComponent(id)}/fail`, {
+      method: 'POST',
+      body: JSON.stringify({ failure_reason: failureReason }),
+    });
+  }
+
+  async cancelJob(id: string): Promise<ScanJob> {
+    return this.request<ScanJob>(`/api/jobs/${encodeURIComponent(id)}/cancel`, {
+      method: 'POST',
+    });
+  }
+
   // Events Telemetry
   async getEvents(): Promise<SystemEvent[]> {
     const res = await this.request<SystemEvent[]>('/api/events');
@@ -630,10 +655,17 @@ class ApiClient {
     });
   }
 
-  async confirmScopeImport(importId: string, selectedRootDomain: string): Promise<ScopeImportReview> {
+  async confirmScopeImport(
+    importId: string,
+    selectedRootDomain: string,
+    confirmedBy: string = 'SECURITY_ANALYST'
+  ): Promise<ScopeImportReview> {
     return this.request<ScopeImportReview>(`/api/scope/imports/${encodeURIComponent(importId)}/confirm`, {
       method: 'POST',
-      body: JSON.stringify({ selected_root_domain: selectedRootDomain }),
+      body: JSON.stringify({
+        selected_root_domain: selectedRootDomain,
+        confirmed_by: confirmedBy,
+      }),
     });
   }
 

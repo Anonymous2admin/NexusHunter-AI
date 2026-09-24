@@ -8,6 +8,7 @@ interface RuntimeContextType {
   isDemo: boolean;
   isOffline: boolean;
   isPartial: boolean;
+  isUnknown: boolean;
   health: HealthResponse | null;
   refreshRuntime: () => Promise<void>;
   assertLiveOrThrow: (operationName: string, allowDemo?: boolean) => void;
@@ -30,12 +31,23 @@ export const RuntimeProvider: React.FC<{ children: ReactNode }> = ({ children })
     try {
       const h = await api.getHealth();
       setHealth(h);
+      if (!h || typeof h !== 'object') {
+        setMode('UNKNOWN');
+        return;
+      }
+
+      // Check authoritative health mode
       if (h.mode === 'LIVE' || api.getLastOrigin() === 'LIVE_BACKEND') {
         setMode('LIVE');
       } else if (h.mode === 'DEMO_FALLBACK' || api.getLastOrigin() === 'DEMO_SYNTHETIC') {
         setMode('DEMO');
+      } else if (h.mode === 'PARTIAL') {
+        setMode('PARTIAL');
+      } else if (h.mode === 'OFFLINE') {
+        setMode('OFFLINE');
       } else {
-        setMode('DEMO');
+        // Unexpected or malformed mode must be UNKNOWN, NOT DEMO
+        setMode('UNKNOWN');
       }
     } catch {
       setMode('OFFLINE');
@@ -60,20 +72,38 @@ export const RuntimeProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   const assertLiveOrThrow = useCallback(
     (operationName: string, allowDemoOverride?: boolean) => {
+      // 1. UNKNOWN runtime mode fails closed unconditionally
+      if (mode === 'UNKNOWN') {
+        const msg = `Action '${operationName}' rejected: Runtime state is UNKNOWN (unexpected or malformed backend health response). All mutations are denied fail-closed to guarantee system truth.`;
+        setRuntimeError(msg);
+        throw new Error(msg);
+      }
+
+      // 2. OFFLINE runtime mode fails closed unconditionally
       if (mode === 'OFFLINE') {
         const msg = `Action '${operationName}' rejected: Backend is currently OFFLINE. Cannot execute mutations without an active connection.`;
         setRuntimeError(msg);
         throw new Error(msg);
       }
 
-      if (mode !== 'LIVE') {
+      // 3. PARTIAL runtime mode fails closed for mutations
+      if (mode === 'PARTIAL') {
+        const msg = `Action '${operationName}' rejected: Backend is in degraded PARTIAL mode. Mutations are denied fail-closed.`;
+        setRuntimeError(msg);
+        throw new Error(msg);
+      }
+
+      // 4. DEMO runtime mode requires explicit sandbox writes enabled
+      if (mode === 'DEMO') {
         const canExecuteDemo = allowDemoOverride !== undefined ? allowDemoOverride : allowDemoMutations;
         if (!canExecuteDemo) {
-          const msg = `Action '${operationName}' rejected: Mutation operations against live environments require an active LIVE backend connection. Currently running in ${mode} mode. Toggle Sandbox Mode in the top banner to permit synthetic sandbox mutations.`;
+          const msg = `Action '${operationName}' rejected: Mutation operations against live environments require an active LIVE backend connection. Currently running in DEMO mode. Enable 'Sandbox Writes' in the top banner to permit synthetic sandbox mutations.`;
           setRuntimeError(msg);
           throw new Error(msg);
         }
       }
+
+      // 5. LIVE mode passes through to real backend operations
     },
     [mode, allowDemoMutations]
   );
@@ -84,6 +114,7 @@ export const RuntimeProvider: React.FC<{ children: ReactNode }> = ({ children })
     isDemo: mode === 'DEMO',
     isOffline: mode === 'OFFLINE',
     isPartial: mode === 'PARTIAL',
+    isUnknown: mode === 'UNKNOWN',
     health,
     refreshRuntime,
     assertLiveOrThrow,

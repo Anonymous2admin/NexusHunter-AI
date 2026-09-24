@@ -41,6 +41,10 @@ func NewRouter(h *Handler, logger *slog.Logger) http.Handler {
 	mux.HandleFunc("POST /api/jobs", h.CreateJob)
 	mux.HandleFunc("GET /api/jobs", h.ListJobs)
 	mux.HandleFunc("GET /api/jobs/{id}", h.GetJob)
+	mux.HandleFunc("POST /api/jobs/{id}/start", h.StartJob)
+	mux.HandleFunc("POST /api/jobs/{id}/complete", h.CompleteJob)
+	mux.HandleFunc("POST /api/jobs/{id}/fail", h.FailJob)
+	mux.HandleFunc("POST /api/jobs/{id}/cancel", h.CancelJob)
 
 	// High-Speed Recon Engine Endpoints
 	mux.HandleFunc("POST /api/recon", h.StartRecon)

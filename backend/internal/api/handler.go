@@ -331,6 +331,106 @@ func (h *Handler) GetJob(w http.ResponseWriter, r *http.Request) {
 	Success(w, http.StatusOK, job)
 }
 
+// StartJob handles POST /api/jobs/{id}/start
+func (h *Handler) StartJob(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if len(parts) >= 3 {
+			id = parts[2]
+		}
+	}
+
+	job, err := h.jobSvc.StartJob(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, jobs.ErrJobNotFound) {
+			Error(w, http.StatusNotFound, "JOB_NOT_FOUND", "scan job not found", id)
+			return
+		}
+		Error(w, http.StatusBadRequest, "INVALID_STATE_TRANSITION", err.Error(), id)
+		return
+	}
+	Success(w, http.StatusOK, job)
+}
+
+// CompleteJob handles POST /api/jobs/{id}/complete
+func (h *Handler) CompleteJob(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if len(parts) >= 3 {
+			id = parts[2]
+		}
+	}
+
+	job, err := h.jobSvc.CompleteJob(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, jobs.ErrJobNotFound) {
+			Error(w, http.StatusNotFound, "JOB_NOT_FOUND", "scan job not found", id)
+			return
+		}
+		Error(w, http.StatusBadRequest, "INVALID_STATE_TRANSITION", err.Error(), id)
+		return
+	}
+	Success(w, http.StatusOK, job)
+}
+
+// FailJobRequest defines payload for failing a job
+type FailJobRequest struct {
+	FailureReason string `json:"failure_reason"`
+}
+
+// FailJob handles POST /api/jobs/{id}/fail
+func (h *Handler) FailJob(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if len(parts) >= 3 {
+			id = parts[2]
+		}
+	}
+
+	var req FailJobRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	reason := req.FailureReason
+	if reason == "" {
+		reason = "Scan job failed by user or system request"
+	}
+
+	job, err := h.jobSvc.FailJob(r.Context(), id, reason)
+	if err != nil {
+		if errors.Is(err, jobs.ErrJobNotFound) {
+			Error(w, http.StatusNotFound, "JOB_NOT_FOUND", "scan job not found", id)
+			return
+		}
+		Error(w, http.StatusBadRequest, "INVALID_STATE_TRANSITION", err.Error(), id)
+		return
+	}
+	Success(w, http.StatusOK, job)
+}
+
+// CancelJob handles POST /api/jobs/{id}/cancel
+func (h *Handler) CancelJob(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if len(parts) >= 3 {
+			id = parts[2]
+		}
+	}
+
+	job, err := h.jobSvc.CancelJob(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, jobs.ErrJobNotFound) {
+			Error(w, http.StatusNotFound, "JOB_NOT_FOUND", "scan job not found", id)
+			return
+		}
+		Error(w, http.StatusBadRequest, "INVALID_STATE_TRANSITION", err.Error(), id)
+		return
+	}
+	Success(w, http.StatusOK, job)
+}
+
 // ListEvents handles GET /api/events
 func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
 	recent := h.eventBus.GetRecentEvents(50)

@@ -107,47 +107,26 @@ export default function App() {
   };
 
   const handleStartJob = async (id: string) => {
-    setJobs((prev) =>
-      prev.map((j) =>
-        j.id === id ? { ...j, status: 'RUNNING', started_at: new Date().toISOString() } : j
-      )
-    );
+    const updated = await api.startJob(id);
+    setJobs((prev) => prev.map((j) => (j.id === id ? updated : j)));
+    api.getEvents().then(setEvents).catch(() => {});
   };
 
   const handleCompleteJob = async (id: string) => {
-    setJobs((prev) =>
-      prev.map((j) =>
-        j.id === id ? { ...j, status: 'COMPLETED', completed_at: new Date().toISOString() } : j
-      )
-    );
+    const updated = await api.completeJob(id);
+    setJobs((prev) => prev.map((j) => (j.id === id ? updated : j)));
+    api.getEvents().then(setEvents).catch(() => {});
   };
 
   const handleFailJob = async (id: string, failureReason: string) => {
-    setJobs((prev) =>
-      prev.map((j) =>
-        j.id === id
-          ? {
-              ...j,
-              status: 'FAILED',
-              completed_at: new Date().toISOString(),
-              error: failureReason,
-            }
-          : j
-      )
-    );
+    const updated = await api.failJob(id, failureReason);
+    setJobs((prev) => prev.map((j) => (j.id === id ? updated : j)));
+    api.getEvents().then(setEvents).catch(() => {});
   };
 
   const handleCancelJob = async (id: string) => {
-    try {
-      await api.cancelRecon(id);
-    } catch {
-      // Fallback if not a recon job
-    }
-    setJobs((prev) =>
-      prev.map((j) =>
-        j.id === id ? { ...j, status: 'CANCELLED', completed_at: new Date().toISOString() } : j
-      )
-    );
+    const updated = await api.cancelJob(id);
+    setJobs((prev) => prev.map((j) => (j.id === id ? updated : j)));
     api.getEvents().then(setEvents).catch(() => {});
   };
 
