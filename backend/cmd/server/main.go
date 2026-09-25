@@ -68,6 +68,7 @@ func main() {
 	// 3. Initialize Storage Layer (Postgres or In-Memory)
 	var (
 		targetStore      storage.TargetRepository
+		jobStore         storage.JobRepository
 		reconStore       storage.ReconRepository
 		intelStore       storage.AssetIntelligenceRepository
 		analysisStore    storage.AIAnalysisRepository
@@ -79,6 +80,11 @@ func main() {
 		cloudStore       storage.CloudIntelligenceRepository
 		wafStore         storage.WAFIntelligenceRepository
 		plannerStore     storage.HuntingPlannerRepository
+
+		storageMode = "MEMORY"
+		runtimeMode = "DEMO_SYNTHETIC"
+		dataOrigin  = "DEMO_SYNTHETIC"
+		dbConn      *sql.DB
 	)
 	if cfg.DatabaseURL != "" {
 		logger.Info("Connecting to PostgreSQL database", slog.String("db_url", maskDatabaseURL(cfg.DatabaseURL)))
@@ -98,6 +104,7 @@ func main() {
 			logger.Warn("PostgreSQL database unreachable in development; falling back to high-speed in-memory store", slog.Any("error", pingErr))
 			memStorage := storage.NewMemoryStorage()
 			targetStore = memStorage
+			jobStore = memStorage
 			reconStore = memStorage
 			intelStore = memStorage
 			analysisStore = memStorage
@@ -114,6 +121,7 @@ func main() {
 			defer db.Close()
 			pgStorage := storage.NewPostgresStorage(db)
 			targetStore = pgStorage
+			jobStore = pgStorage
 			reconStore = pgStorage
 			intelStore = pgStorage
 			analysisStore = pgStorage
@@ -127,11 +135,17 @@ func main() {
 			cloudStore = pg8Storage
 			wafStore = pg8Storage
 			plannerStore = pg8Storage
+
+			storageMode = "POSTGRES"
+			runtimeMode = "LIVE_BACKEND"
+			dataOrigin = "LIVE_BACKEND"
+			dbConn = db
 		}
 	} else {
 		logger.Info("No DATABASE_URL configured; initializing high-speed in-memory store for local development")
 		memStorage := storage.NewMemoryStorage()
 		targetStore = memStorage
+		jobStore = memStorage
 		reconStore = memStorage
 		intelStore = memStorage
 		analysisStore = memStorage
@@ -148,7 +162,7 @@ func main() {
 	// 4. Initialize Core Domain Services & Recon Engine
 	scopeValidator := scope.NewValidator()
 	eventBus := events.NewMemoryEventBus(500)
-	jobManager := jobs.NewManager(eventBus)
+	jobManager := jobs.NewManager(eventBus, jobStore)
 	jobManager.SetTargetChecker(targetStore)
 
 	engineCfg := recon.DefaultEngineConfig()
@@ -213,6 +227,7 @@ func main() {
 		PlannerRepo:     plannerStore,
 		PlannerSvc:      plannerSvc,
 	})
+	handler.SetRuntimeModes(storageMode, runtimeMode, dataOrigin, dbConn)
 	router := api.NewRouter(handler, logger)
 
 

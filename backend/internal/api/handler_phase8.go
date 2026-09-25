@@ -123,6 +123,7 @@ type ConfirmScopeImportReq struct {
 	SelectedRootDomain string `json:"selected_root_domain"`
 	SelectionReason    string `json:"selection_reason,omitempty"`
 	TargetName         string `json:"target_name"`
+	ConfirmedBy        string `json:"confirmed_by,omitempty"`
 }
 
 func (h *Handler) ConfirmScopeImport(w http.ResponseWriter, r *http.Request) {
@@ -157,25 +158,12 @@ func (h *Handler) ConfirmScopeImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	selectedRoot := req.SelectedRootDomain
+	// Phase 8.2R-FINAL.3 Item 5: Zero automatic primary-root selection.
+	// Even for a single root domain, explicit confirmation from the caller is mandatory.
 	if selectedRoot == "" {
-		selectedRoot = rev.SelectedRootDomain
-	}
-
-	// Section 8 Invariant: When multiple root domains exist, NO silent default selection is permitted
-	if len(rev.RootDomains) > 1 && req.SelectedRootDomain == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "multiple root domains discovered; explicit selected_root_domain is strictly required",
+			"error": "explicit selected_root_domain is strictly required; automatic primary-root selection is disabled",
 		})
-		return
-	}
-
-	// If exactly one root domain existed and was candidate
-	if selectedRoot == "" && len(rev.RootDomains) == 1 {
-		selectedRoot = rev.RootDomains[0].NormalizedDomain
-	}
-
-	if selectedRoot == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no valid root domain selected for target"})
 		return
 	}
 
@@ -225,7 +213,12 @@ func (h *Handler) ConfirmScopeImport(w http.ResponseWriter, r *http.Request) {
 		target.ScopeConfig.Exclude = append(target.ScopeConfig.Exclude, rev.CanonicalScope.ExcludeHosts...)
 	}
 
-	if err := h.p8ScopeImportRepo.ConfirmImportReview(ctx, id, selectedRoot, target.ID); err != nil {
+	confirmedBy := req.ConfirmedBy
+	if confirmedBy == "" {
+		confirmedBy = "lead-researcher"
+	}
+
+	if err := h.p8ScopeImportRepo.ConfirmImportReviewProvenance(ctx, id, selectedRoot, target.ID, confirmedBy); err != nil {
 		if errors.Is(err, storage.ErrInvalidState) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "scope import has already been confirmed"})
 			return
@@ -241,14 +234,18 @@ func (h *Handler) ConfirmScopeImport(w http.ResponseWriter, r *http.Request) {
 	rev.Status = "CONFIRMED"
 	rev.TargetID = target.ID
 	rev.SelectedRootDomain = selectedRoot
+	rev.ConfirmedBy = confirmedBy
 	rev.ConfirmedAt = &now
 	rev.SelectionReason = req.SelectionReason
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"status":         "CONFIRMED",
-		"target_id":      target.ID,
-		"selected_root":  selectedRoot,
-		"scope_review":   rev,
+		"status":                 "CONFIRMED",
+		"target_id":              target.ID,
+		"selected_root":          selectedRoot,
+		"confirmed_by":           confirmedBy,
+		"source_import_id":       rev.ID,
+		"canonical_scope_sha256": rev.CanonicalScopeSHA256,
+		"scope_review":           rev,
 	})
 }
 

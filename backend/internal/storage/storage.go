@@ -24,10 +24,11 @@ type TargetRepository interface {
 
 // JobRepository specifies storage operations for scan jobs.
 type JobRepository interface {
-	Create(ctx context.Context, job *models.ScanJob) error
-	GetByID(ctx context.Context, id string) (*models.ScanJob, error)
-	List(ctx context.Context, targetID string) ([]*models.ScanJob, error)
-	Update(ctx context.Context, job *models.ScanJob) error
+	CreateJob(ctx context.Context, job *models.ScanJob) error
+	GetJobByID(ctx context.Context, id string) (*models.ScanJob, error)
+	ListJobs(ctx context.Context, targetID string) ([]*models.ScanJob, error)
+	UpdateJob(ctx context.Context, job *models.ScanJob) error
+	DeleteJob(ctx context.Context, id string) error
 }
 
 // EventRepository specifies storage operations for audit and telemetry events.
@@ -177,6 +178,7 @@ type ReasoningRepository interface {
 	ListHypotheses(ctx context.Context, targetID string) ([]*models.Hypothesis, error)
 	ListHypothesesByGroup(ctx context.Context, groupID string) ([]*models.Hypothesis, error)
 	UpdateHypothesisStatus(ctx context.Context, id string, status models.HypothesisStatus) error
+	UpdateHypothesisStatusWithGuard(ctx context.Context, id string, expectedStatus models.HypothesisStatus, newStatus models.HypothesisStatus) error
 
 	// Falsification & Missing Evidence Requirements
 	SaveFalsificationCondition(ctx context.Context, cond *models.FalsificationCondition) error
@@ -217,6 +219,7 @@ type ScopeImportRepository interface {
 	GetImportReview(ctx context.Context, id string) (*models.ScopeImportReview, error)
 	ListImportReviews(ctx context.Context) ([]*models.ScopeImportReview, error)
 	ConfirmImportReview(ctx context.Context, id string, selectedRootDomain string, targetID string) error
+	ConfirmImportReviewProvenance(ctx context.Context, id string, selectedRootDomain string, targetID string, confirmedBy string) error
 }
 
 // JSIntelligenceRepository manages JavaScript assets, references, and redacted secret indicators.

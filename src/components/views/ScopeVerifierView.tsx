@@ -95,27 +95,44 @@ export const ScopeVerifierView: React.FC<ScopeVerifierViewProps> = ({
       api.getScopeImports()
         .then((res) => {
           setImportReviews(res);
-          if (res.length > 0 && !selectedReview) setSelectedReview(res[0]);
+          if (res.length > 0 && !selectedReview) {
+            setSelectedReview(res[0]);
+            setSelectedRootCandidate(''); // Explicit selection required
+          }
         })
-        .catch(() => {});
+        .catch((err) => {
+          showRuntimeError(err);
+        });
     } else if (activeTab === 'js-intel') {
-      Promise.all([
-        api.getJSAssets(selectedTargetId).catch(() => []),
-        api.getJSReferences(selectedTargetId).catch(() => []),
-        api.getJSSecrets(selectedTargetId).catch(() => []),
-      ]).then(([assets, refs, secrets]) => {
-        setJsAssets(assets);
-        setJsReferences(refs);
-        setJsSecrets(secrets);
+      Promise.allSettled([
+        api.getJSAssets(selectedTargetId),
+        api.getJSReferences(selectedTargetId),
+        api.getJSSecrets(selectedTargetId),
+      ]).then(([assetsRes, refsRes, secretsRes]) => {
+        if (assetsRes.status === 'fulfilled') {
+          setJsAssets(assetsRes.value || []);
+        } else {
+          showRuntimeError(`JS Assets: ${assetsRes.reason?.message || 'Failed to load'}`);
+        }
+        if (refsRes.status === 'fulfilled') {
+          setJsReferences(refsRes.value || []);
+        } else {
+          showRuntimeError(`JS References: ${refsRes.reason?.message || 'Failed to load'}`);
+        }
+        if (secretsRes.status === 'fulfilled') {
+          setJsSecrets(secretsRes.value || []);
+        } else {
+          showRuntimeError(`JS Secrets: ${secretsRes.reason?.message || 'Failed to load'}`);
+        }
       });
     } else if (activeTab === 'cloud-intel') {
       api.getCloudReferences(selectedTargetId)
         .then(setCloudRefs)
-        .catch(() => {});
+        .catch((err) => showRuntimeError(err));
     } else if (activeTab === 'hunting-planner') {
       api.getInvestigationPlans(selectedTargetId)
         .then(setPlans)
-        .catch(() => {});
+        .catch((err) => showRuntimeError(err));
     }
   }, [selectedTargetId, activeTab]);
 

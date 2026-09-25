@@ -50,15 +50,35 @@ export default function App() {
       }
 
       // Fetch targets, jobs, events in parallel
-      const [fetchedTargets, fetchedJobs, fetchedEvents] = await Promise.all([
-        api.getTargets().catch(() => []),
-        api.getJobs().catch(() => []),
-        api.getEvents().catch(() => []),
+      const [targetsRes, jobsRes, eventsRes] = await Promise.allSettled([
+        api.getTargets(),
+        api.getJobs(),
+        api.getEvents(),
       ]);
 
-      setTargets(fetchedTargets);
-      setJobs(fetchedJobs);
-      setEvents(fetchedEvents);
+      const loadErrors: string[] = [];
+
+      if (targetsRes.status === 'fulfilled') {
+        setTargets(targetsRes.value || []);
+      } else {
+        loadErrors.push(`Targets: ${targetsRes.reason?.message || 'Failed to load'}`);
+      }
+
+      if (jobsRes.status === 'fulfilled') {
+        setJobs(jobsRes.value || []);
+      } else {
+        loadErrors.push(`Jobs: ${jobsRes.reason?.message || 'Failed to load'}`);
+      }
+
+      if (eventsRes.status === 'fulfilled') {
+        setEvents(eventsRes.value || []);
+      } else {
+        loadErrors.push(`Events: ${eventsRes.reason?.message || 'Failed to load'}`);
+      }
+
+      if (loadErrors.length > 0) {
+        setError(loadErrors.join(' | '));
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to load telemetry and state.');
     } finally {

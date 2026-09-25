@@ -61,6 +61,20 @@ type Handler struct {
 	p8WAFDetector     waf.Detector
 	p8PlannerRepo     storage.HuntingPlannerRepository
 	p8PlannerSvc      planner.Service
+
+	// Phase 8.2R Runtime Truth Layer
+	storageMode string
+	runtimeMode string
+	dataOrigin  string
+	dbConn      *sql.DB
+}
+
+// SetRuntimeModes registers the storage mode, runtime mode, and data origin for authoritative runtime truth.
+func (h *Handler) SetRuntimeModes(storageMode, runtimeMode, dataOrigin string, db *sql.DB) {
+	h.storageMode = storageMode
+	h.runtimeMode = runtimeMode
+	h.dataOrigin = dataOrigin
+	h.dbConn = db
 }
 
 
@@ -117,11 +131,45 @@ func (h *Handler) SetReasoningIntelligence(reasoningRepo storage.ReasoningReposi
 
 // HealthCheck handles GET /api/health
 func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
+	runtimeMode := h.runtimeMode
+	if runtimeMode == "" {
+		runtimeMode = "DEMO_SYNTHETIC"
+	}
+	storageMode := h.storageMode
+	if storageMode == "" {
+		storageMode = "MEMORY"
+	}
+	dataOrigin := h.dataOrigin
+	if dataOrigin == "" {
+		dataOrigin = "DEMO_SYNTHETIC"
+	}
+	status := "ok"
+
+	// If configured as POSTGRES, verify connection is still alive
+	if storageMode == "POSTGRES" && h.dbConn != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 1*time.Second)
+		defer cancel()
+		if err := h.dbConn.PingContext(ctx); err != nil {
+			status = "degraded"
+			storageMode = "UNAVAILABLE"
+			runtimeMode = "OFFLINE"
+			dataOrigin = "SIMULATED"
+		}
+	}
+
+	w.Header().Set("x-nexus-origin", dataOrigin)
+	w.Header().Set("x-nexus-storage", storageMode)
+	w.Header().Set("x-nexus-runtime-mode", runtimeMode)
+
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"status":  "ok",
-		"service": h.cfg.ServiceName,
-		"mode":    "LIVE",
-		"time":    time.Now().UTC().Format(time.RFC3339),
+		"status":       status,
+		"service":      h.cfg.ServiceName,
+		"runtime_mode": runtimeMode,
+		"storage_mode": storageMode,
+		"data_origin":  dataOrigin,
+		"environment":  h.cfg.AppEnv,
+		"mode":         runtimeMode, // backward compatibility
+		"time":         time.Now().UTC().Format(time.RFC3339),
 	})
 }
 

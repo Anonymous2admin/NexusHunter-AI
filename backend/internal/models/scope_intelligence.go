@@ -71,6 +71,7 @@ type ScopeImportReview struct {
 	NormalizationManifestSHA256  string                 `json:"normalization_manifest_sha256"`
 	SelectionReason              string                 `json:"selection_reason,omitempty"`
 	TargetID                     string                 `json:"target_id,omitempty"`
+	ConfirmedBy                  string                 `json:"confirmed_by,omitempty"`
 	CreatedAt                    time.Time              `json:"created_at"`
 	ConfirmedAt                  *time.Time             `json:"confirmed_at,omitempty"`
 }

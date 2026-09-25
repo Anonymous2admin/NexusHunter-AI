@@ -25,6 +25,83 @@ type TargetChecker interface {
 	GetByID(ctx context.Context, id string) (*models.Target, error)
 }
 
+// JobRepository specifies the durable storage interface for scan jobs.
+// Guarantees that across process restarts, all QUEUED/RUNNING/COMPLETED/FAILED/CANCELLED
+// job states remain durable and fully recoverable.
+type JobRepository interface {
+	CreateJob(ctx context.Context, job *models.ScanJob) error
+	GetJobByID(ctx context.Context, id string) (*models.ScanJob, error)
+	ListJobs(ctx context.Context, targetID string) ([]*models.ScanJob, error)
+	UpdateJob(ctx context.Context, job *models.ScanJob) error
+	DeleteJob(ctx context.Context, id string) error
+}
+
+// MemoryJobRepository provides in-memory durable job storage for development and test harnesses.
+type MemoryJobRepository struct {
+	mu   sync.RWMutex
+	jobs map[string]*models.ScanJob
+}
+
+// NewMemoryJobRepository initializes a process-isolated job repository.
+func NewMemoryJobRepository() *MemoryJobRepository {
+	return &MemoryJobRepository{
+		jobs: make(map[string]*models.ScanJob),
+	}
+}
+
+func (m *MemoryJobRepository) CreateJob(ctx context.Context, job *models.ScanJob) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := *job
+	m.jobs[job.ID] = &cp
+	return nil
+}
+
+func (m *MemoryJobRepository) GetJobByID(ctx context.Context, id string) (*models.ScanJob, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	j, exists := m.jobs[id]
+	if !exists {
+		return nil, ErrJobNotFound
+	}
+	cp := *j
+	return &cp, nil
+}
+
+func (m *MemoryJobRepository) ListJobs(ctx context.Context, targetID string) ([]*models.ScanJob, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var res []*models.ScanJob
+	for _, j := range m.jobs {
+		if targetID == "" || j.TargetID == targetID {
+			cp := *j
+			res = append(res, &cp)
+		}
+	}
+	return res, nil
+}
+
+func (m *MemoryJobRepository) UpdateJob(ctx context.Context, job *models.ScanJob) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.jobs[job.ID]; !exists {
+		return ErrJobNotFound
+	}
+	cp := *job
+	m.jobs[job.ID] = &cp
+	return nil
+}
+
+func (m *MemoryJobRepository) DeleteJob(ctx context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.jobs[id]; !exists {
+		return ErrJobNotFound
+	}
+	delete(m.jobs, id)
+	return nil
+}
+
 // JobService specifies the lifecycle management interface for scan jobs.
 type JobService interface {
 	CreateJob(ctx context.Context, targetID string, jobType string, metadata map[string]interface{}) (*models.ScanJob, error)
@@ -36,20 +113,35 @@ type JobService interface {
 	CancelJob(ctx context.Context, id string) (*models.ScanJob, error)
 }
 
-// Manager implements JobService with in-memory persistence and event publishing.
+// Manager implements JobService backed by a durable JobRepository and event publishing.
+// Single-process guarantees: A local mutex coordinates in-process concurrency, while
+// the backing JobRepository enforces transactional state persistence.
 type Manager struct {
 	mu            sync.RWMutex
-	jobs          map[string]*models.ScanJob
+	repo          JobRepository
 	eventBus      events.EventBus
 	targetChecker TargetChecker
 }
 
-// NewManager creates a new Job Manager instance.
-func NewManager(eventBus events.EventBus) *Manager {
+// NewManager creates a new Job Manager instance backed by an authoritative JobRepository.
+func NewManager(eventBus events.EventBus, repo ...JobRepository) *Manager {
+	var r JobRepository
+	if len(repo) > 0 && repo[0] != nil {
+		r = repo[0]
+	} else {
+		r = NewMemoryJobRepository()
+	}
 	return &Manager{
-		jobs:     make(map[string]*models.ScanJob),
+		repo:     r,
 		eventBus: eventBus,
 	}
+}
+
+// SetJobRepository registers or swaps the underlying durable JobRepository.
+func (m *Manager) SetJobRepository(repo JobRepository) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.repo = repo
 }
 
 // SetTargetChecker registers a TargetChecker dependency for target activity verification.
@@ -107,10 +199,12 @@ func (m *Manager) CreateJob(ctx context.Context, targetID string, jobType string
 		Metadata:  metadata,
 	}
 
-	m.jobs[jobID] = job
+	if err := m.repo.CreateJob(ctx, job); err != nil {
+		return nil, fmt.Errorf("failed to persist new scan job: %w", err)
+	}
 
 	if m.eventBus != nil {
-		_ = m.eventBus.Publish(ctx, models.Event{
+		if err := m.eventBus.Publish(ctx, models.Event{
 			EventID:   events.GenerateID("evt"),
 			EventType: models.EventJobCreated,
 			JobID:     job.ID,
@@ -126,7 +220,9 @@ func (m *Manager) CreateJob(ctx context.Context, targetID string, jobType string
 				"job_type":       job.Type,
 				"metadata":       metadata,
 			},
-		})
+		}); err != nil {
+			return nil, fmt.Errorf("failed to publish job created audit event: %w", err)
+		}
 	}
 
 	copied := *job
@@ -138,12 +234,7 @@ func (m *Manager) GetJob(ctx context.Context, id string) (*models.ScanJob, error
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	job, exists := m.jobs[id]
-	if !exists {
-		return nil, ErrJobNotFound
-	}
-	copied := *job
-	return &copied, nil
+	return m.repo.GetJobByID(ctx, id)
 }
 
 // ListJobs retrieves all jobs, optionally filtered by targetID.
@@ -151,14 +242,7 @@ func (m *Manager) ListJobs(ctx context.Context, targetID string) ([]*models.Scan
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	result := make([]*models.ScanJob, 0, len(m.jobs))
-	for _, job := range m.jobs {
-		if targetID == "" || job.TargetID == targetID {
-			copied := *job
-			result = append(result, &copied)
-		}
-	}
-	return result, nil
+	return m.repo.ListJobs(ctx, targetID)
 }
 
 // StartJob transitions a QUEUED job to RUNNING. Idempotent if already RUNNING.
@@ -166,8 +250,8 @@ func (m *Manager) StartJob(ctx context.Context, id string) (*models.ScanJob, err
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	job, exists := m.jobs[id]
-	if !exists {
+	job, err := m.repo.GetJobByID(ctx, id)
+	if err != nil || job == nil {
 		return nil, ErrJobNotFound
 	}
 
@@ -192,8 +276,12 @@ func (m *Manager) StartJob(ctx context.Context, id string) (*models.ScanJob, err
 	job.StartedAt = &now
 	corrID := events.GenerateID("corr")
 
+	if err := m.repo.UpdateJob(ctx, job); err != nil {
+		return nil, fmt.Errorf("failed to persist job state transition: %w", err)
+	}
+
 	if m.eventBus != nil {
-		_ = m.eventBus.Publish(ctx, models.Event{
+		if err := m.eventBus.Publish(ctx, models.Event{
 			EventID:   events.GenerateID("evt"),
 			EventType: models.EventJobStarted,
 			JobID:     job.ID,
@@ -208,7 +296,9 @@ func (m *Manager) StartJob(ctx context.Context, id string) (*models.ScanJob, err
 				"new_state":      string(models.JobStatusRunning),
 				"job_type":       job.Type,
 			},
-		})
+		}); err != nil {
+			return nil, fmt.Errorf("failed to publish job started audit event: %w", err)
+		}
 	}
 
 	copied := *job
@@ -220,8 +310,8 @@ func (m *Manager) CompleteJob(ctx context.Context, id string) (*models.ScanJob, 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	job, exists := m.jobs[id]
-	if !exists {
+	job, err := m.repo.GetJobByID(ctx, id)
+	if err != nil || job == nil {
 		return nil, ErrJobNotFound
 	}
 
@@ -246,8 +336,12 @@ func (m *Manager) CompleteJob(ctx context.Context, id string) (*models.ScanJob, 
 	job.CompletedAt = &now
 	corrID := events.GenerateID("corr")
 
+	if err := m.repo.UpdateJob(ctx, job); err != nil {
+		return nil, fmt.Errorf("failed to persist job completion: %w", err)
+	}
+
 	if m.eventBus != nil {
-		_ = m.eventBus.Publish(ctx, models.Event{
+		if err := m.eventBus.Publish(ctx, models.Event{
 			EventID:   events.GenerateID("evt"),
 			EventType: models.EventJobCompleted,
 			JobID:     job.ID,
@@ -262,7 +356,9 @@ func (m *Manager) CompleteJob(ctx context.Context, id string) (*models.ScanJob, 
 				"new_state":      string(models.JobStatusCompleted),
 				"job_type":       job.Type,
 			},
-		})
+		}); err != nil {
+			return nil, fmt.Errorf("failed to publish job completed audit event: %w", err)
+		}
 	}
 
 	copied := *job
@@ -275,8 +371,8 @@ func (m *Manager) FailJob(ctx context.Context, id string, failureReason string) 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	job, exists := m.jobs[id]
-	if !exists {
+	job, err := m.repo.GetJobByID(ctx, id)
+	if err != nil || job == nil {
 		return nil, ErrJobNotFound
 	}
 
@@ -302,8 +398,12 @@ func (m *Manager) FailJob(ctx context.Context, id string, failureReason string) 
 	job.Error = failureReason
 	corrID := events.GenerateID("corr")
 
+	if err := m.repo.UpdateJob(ctx, job); err != nil {
+		return nil, fmt.Errorf("failed to persist job failure: %w", err)
+	}
+
 	if m.eventBus != nil {
-		_ = m.eventBus.Publish(ctx, models.Event{
+		if err := m.eventBus.Publish(ctx, models.Event{
 			EventID:   events.GenerateID("evt"),
 			EventType: models.EventJobFailed,
 			JobID:     job.ID,
@@ -319,7 +419,9 @@ func (m *Manager) FailJob(ctx context.Context, id string, failureReason string) 
 				"job_type":       job.Type,
 				"error":          failureReason,
 			},
-		})
+		}); err != nil {
+			return nil, fmt.Errorf("failed to publish job failed audit event: %w", err)
+		}
 	}
 
 	copied := *job
@@ -332,8 +434,8 @@ func (m *Manager) CancelJob(ctx context.Context, id string) (*models.ScanJob, er
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	job, exists := m.jobs[id]
-	if !exists {
+	job, err := m.repo.GetJobByID(ctx, id)
+	if err != nil || job == nil {
 		return nil, ErrJobNotFound
 	}
 
@@ -358,8 +460,12 @@ func (m *Manager) CancelJob(ctx context.Context, id string) (*models.ScanJob, er
 	job.CompletedAt = &now
 	corrID := events.GenerateID("corr")
 
+	if err := m.repo.UpdateJob(ctx, job); err != nil {
+		return nil, fmt.Errorf("failed to persist job cancellation: %w", err)
+	}
+
 	if m.eventBus != nil {
-		_ = m.eventBus.Publish(ctx, models.Event{
+		if err := m.eventBus.Publish(ctx, models.Event{
 			EventID:   events.GenerateID("evt"),
 			EventType: models.EventJobCancelled,
 			JobID:     job.ID,
@@ -374,7 +480,9 @@ func (m *Manager) CancelJob(ctx context.Context, id string) (*models.ScanJob, er
 				"new_state":      string(models.JobStatusCancelled),
 				"job_type":       job.Type,
 			},
-		})
+		}); err != nil {
+			return nil, fmt.Errorf("failed to publish job cancelled audit event: %w", err)
+		}
 	}
 
 	copied := *job

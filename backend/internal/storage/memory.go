@@ -243,6 +243,17 @@ func (m *MemoryStorage) UpdateJob(ctx context.Context, job *models.ScanJob) erro
 	return nil
 }
 
+func (m *MemoryStorage) DeleteJob(ctx context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.jobs[id]; !exists {
+		return ErrNotFound
+	}
+	delete(m.jobs, id)
+	return nil
+}
+
 // Event Operations
 func (m *MemoryStorage) Record(ctx context.Context, event *models.Event) error {
 	m.mu.Lock()
@@ -1876,6 +1887,21 @@ func (m *MemoryStorage) UpdateHypothesisStatus(ctx context.Context, id string, s
 	return nil
 }
 
+func (m *MemoryStorage) UpdateHypothesisStatusWithGuard(ctx context.Context, id string, expectedStatus models.HypothesisStatus, newStatus models.HypothesisStatus) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	hyp, exists := m.hypotheses[id]
+	if !exists {
+		return ErrNotFound
+	}
+	if hyp.Status != expectedStatus {
+		return ErrInvalidState
+	}
+	hyp.Status = newStatus
+	hyp.UpdatedAt = time.Now()
+	return nil
+}
+
 func (m *MemoryStorage) SaveFalsificationCondition(ctx context.Context, cond *models.FalsificationCondition) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -2153,6 +2179,10 @@ func (m *MemoryStorage) ListImportReviews(ctx context.Context) ([]*models.ScopeI
 }
 
 func (m *MemoryStorage) ConfirmImportReview(ctx context.Context, id string, selectedRootDomain string, targetID string) error {
+	return m.ConfirmImportReviewProvenance(ctx, id, selectedRootDomain, targetID, "lead-researcher")
+}
+
+func (m *MemoryStorage) ConfirmImportReviewProvenance(ctx context.Context, id string, selectedRootDomain string, targetID string, confirmedBy string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rev, exists := m.scopeImports[id]
@@ -2166,6 +2196,7 @@ func (m *MemoryStorage) ConfirmImportReview(ctx context.Context, id string, sele
 	rev.Status = "CONFIRMED"
 	rev.SelectedRootDomain = selectedRootDomain
 	rev.TargetID = targetID
+	rev.ConfirmedBy = confirmedBy
 	rev.ConfirmedAt = &now
 	return nil
 }

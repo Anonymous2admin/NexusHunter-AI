@@ -134,8 +134,8 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
     evidence_type: 'HTTP_RESPONSE',
     source: 'MANUAL_PROBE',
     url: '',
-    method: 'GET',
-    status_code: 200,
+    method: '',
+    status_code: '',
     headers: '',
     body: '',
   });
@@ -275,13 +275,17 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
         throw new Error('Evaluation rejected: Selected expectation has no explicit endpoint URL.');
       }
 
+      if (!evalEvidenceRef) {
+        throw new Error('Evaluation rejected: Supporting evidence reference is strictly required. Contradictions cannot be evaluated without empirical evidence context.');
+      }
+
       const res = await api.evaluateContradiction({
         target_id: activeTarget.id,
         asset_id: targetAssetId,
         endpoint: targetEndpoint,
         expectation: exp,
         observed_state: evalObservedState,
-        evidence_refs: evalEvidenceRef ? [evalEvidenceRef] : [],
+        evidence_refs: [evalEvidenceRef],
       });
 
       if (res?.contradiction_found && res?.contradiction) {
@@ -329,6 +333,16 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
 
     if (!recordForm.url?.trim()) {
       showRuntimeError('Target endpoint URL is required. Please provide an explicit observed endpoint URL.');
+      return;
+    }
+
+    if (!recordForm.method?.trim()) {
+      showRuntimeError('HTTP method is required.');
+      return;
+    }
+
+    if (recordForm.status_code === '' || isNaN(Number(recordForm.status_code))) {
+      showRuntimeError('Observed HTTP status code is required.');
       return;
     }
 
@@ -382,8 +396,8 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
           evidence_type: 'HTTP_RESPONSE',
           source: 'MANUAL_PROBE',
           url: '',
-          method: 'GET',
-          status_code: 200,
+          method: '',
+          status_code: '',
           headers: '',
           body: '',
         });
@@ -1483,7 +1497,7 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-slate-300 font-semibold mb-1">Evidence Type</label>
                   <select
@@ -1499,11 +1513,32 @@ export const EvidenceIntelligenceView: React.FC<EvidenceIntelligenceViewProps> =
                 </div>
 
                 <div>
-                  <label className="block text-slate-300 font-semibold mb-1">HTTP Status Code</label>
+                  <label className="block text-slate-300 font-semibold mb-1">HTTP Method</label>
+                  <select
+                    required
+                    value={recordForm.method}
+                    onChange={(e) => setRecordForm({ ...recordForm, method: e.target.value })}
+                    className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-slate-200 focus:border-indigo-500 focus:outline-hidden"
+                  >
+                    <option value="">-- Method --</option>
+                    <option value="GET">GET</option>
+                    <option value="POST">POST</option>
+                    <option value="PUT">PUT</option>
+                    <option value="DELETE">DELETE</option>
+                    <option value="PATCH">PATCH</option>
+                    <option value="HEAD">HEAD</option>
+                    <option value="OPTIONS">OPTIONS</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Status Code</label>
                   <input
                     type="number"
+                    required
+                    placeholder="e.g. 200"
                     value={recordForm.status_code}
-                    onChange={(e) => setRecordForm({ ...recordForm, status_code: Number(e.target.value) })}
+                    onChange={(e) => setRecordForm({ ...recordForm, status_code: e.target.value })}
                     className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-slate-200 focus:border-indigo-500 focus:outline-hidden"
                   />
                 </div>

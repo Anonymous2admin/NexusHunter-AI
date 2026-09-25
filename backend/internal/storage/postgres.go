@@ -189,6 +189,116 @@ func (p *PostgresStorage) CreateJob(ctx context.Context, job *models.ScanJob) er
 	return err
 }
 
+// GetJobByID retrieves a scan job by its ID from PostgreSQL.
+func (p *PostgresStorage) GetJobByID(ctx context.Context, id string) (*models.ScanJob, error) {
+	query := `
+		SELECT id, target_id, type, status, created_at, started_at, completed_at, error, metadata
+		FROM scan_jobs WHERE id = $1
+	`
+	row := p.db.QueryRowContext(ctx, query, id)
+	var j models.ScanJob
+	var statusStr string
+	var metaJSON []byte
+	err := row.Scan(
+		&j.ID, &j.TargetID, &j.Type, &statusStr, &j.CreatedAt, &j.StartedAt, &j.CompletedAt, &j.Error, &metaJSON,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	j.Status = models.JobStatus(statusStr)
+	if len(metaJSON) > 0 {
+		_ = json.Unmarshal(metaJSON, &j.Metadata)
+	}
+	return &j, nil
+}
+
+// ListJobs retrieves scan jobs filtered optionally by targetID from PostgreSQL.
+func (p *PostgresStorage) ListJobs(ctx context.Context, targetID string) ([]*models.ScanJob, error) {
+	query := `
+		SELECT id, target_id, type, status, created_at, started_at, completed_at, error, metadata
+		FROM scan_jobs
+		WHERE ($1 = '' OR target_id = $1)
+		ORDER BY created_at DESC
+	`
+	rows, err := p.db.QueryContext(ctx, query, targetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []*models.ScanJob
+	for rows.Next() {
+		var j models.ScanJob
+		var statusStr string
+		var metaJSON []byte
+		err := rows.Scan(
+			&j.ID, &j.TargetID, &j.Type, &statusStr, &j.CreatedAt, &j.StartedAt, &j.CompletedAt, &j.Error, &metaJSON,
+		)
+		if err != nil {
+			return nil, err
+		}
+		j.Status = models.JobStatus(statusStr)
+		if len(metaJSON) > 0 {
+			_ = json.Unmarshal(metaJSON, &j.Metadata)
+		}
+		result = append(result, &j)
+	}
+	return result, nil
+}
+
+// UpdateJob updates an existing scan job state and timestamps in PostgreSQL.
+func (p *PostgresStorage) UpdateJob(ctx context.Context, job *models.ScanJob) error {
+	metaJSON, err := json.Marshal(job.Metadata)
+	if err != nil {
+		metaJSON = []byte("{}")
+	}
+
+	query := `
+		UPDATE scan_jobs
+		SET status = $2, started_at = $3, completed_at = $4, error = $5, metadata = $6
+		WHERE id = $1
+	`
+	res, err := p.db.ExecContext(ctx, query,
+		job.ID,
+		string(job.Status),
+		job.StartedAt,
+		job.CompletedAt,
+		job.Error,
+		string(metaJSON),
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteJob removes a scan job by its ID from PostgreSQL.
+func (p *PostgresStorage) DeleteJob(ctx context.Context, id string) error {
+	query := `DELETE FROM scan_jobs WHERE id = $1`
+	res, err := p.db.ExecContext(ctx, query, id)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func splitNonEmpty(s string) []string {
 	if s == "" {
 		return []string{}

@@ -47,6 +47,10 @@ export interface HealthResponse {
   status: string;
   service: string;
   mode?: 'LIVE' | 'DEMO_FALLBACK' | 'OFFLINE' | 'PARTIAL' | string;
+  runtime_mode?: 'LIVE_BACKEND' | 'DEMO_SYNTHETIC' | 'OFFLINE' | 'PARTIAL' | 'UNKNOWN' | string;
+  storage_mode?: 'POSTGRES' | 'MEMORY' | 'UNAVAILABLE' | string;
+  data_origin?: 'LIVE_BACKEND' | 'DEMO_SYNTHETIC' | 'SIMULATED' | string;
+  environment?: string;
   time?: string;
 }
 

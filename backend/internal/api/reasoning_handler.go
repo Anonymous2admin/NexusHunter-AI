@@ -213,9 +213,16 @@ func (h *Handler) UpdateHypothesisStatus(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	if err := h.reasoningRepo.UpdateHypothesisStatus(r.Context(), id, req.Status); err != nil {
-		Error(w, http.StatusInternalServerError, "UPDATE_FAILED", "failed to update hypothesis status", err.Error())
-		return
+	if req.Status == models.HypothesisStatusSupported {
+		if err := h.reasoningRepo.UpdateHypothesisStatusWithGuard(r.Context(), id, models.HypothesisStatusHypothesized, req.Status); err != nil {
+			Error(w, http.StatusConflict, "CONCURRENT_MODIFICATION", "hypothesis status transition conflict; must be HYPOTHESIZED", err.Error())
+			return
+		}
+	} else {
+		if err := h.reasoningRepo.UpdateHypothesisStatus(r.Context(), id, req.Status); err != nil {
+			Error(w, http.StatusInternalServerError, "UPDATE_FAILED", "failed to update hypothesis status", err.Error())
+			return
+		}
 	}
 	JSON(w, http.StatusOK, map[string]string{"status": string(req.Status), "updated_at": time.Now().UTC().Format(time.RFC3339)})
 }
@@ -439,8 +446,14 @@ func (h *Handler) ExecuteInvestigationStep(w http.ResponseWriter, r *http.Reques
 		inv.ResultSummary = fmt.Sprintf("Investigation steps evaluated under sandbox simulation. %d evidence records evaluated.", len(inv.GeneratedEvidence))
 	}
 
-	_ = h.reasoningRepo.UpdateInvestigationStatus(r.Context(), id, inv.Status, inv.ResultSummary)
-	_ = h.reasoningRepo.SaveInvestigation(r.Context(), inv)
+	if err := h.reasoningRepo.UpdateInvestigationStatus(r.Context(), id, inv.Status, inv.ResultSummary); err != nil {
+		Error(w, http.StatusInternalServerError, "PERSISTENCE_FAILED", "failed to update investigation status", err.Error())
+		return
+	}
+	if err := h.reasoningRepo.SaveInvestigation(r.Context(), inv); err != nil {
+		Error(w, http.StatusInternalServerError, "PERSISTENCE_FAILED", "failed to persist investigation state", err.Error())
+		return
+	}
 
 	JSON(w, http.StatusOK, inv)
 }
@@ -662,9 +675,31 @@ func (h *Handler) AIAssistedReasoning(w http.ResponseWriter, r *http.Request) {
 		"trust_boundary":   "UNTRUSTED_EXTERNAL_INPUT_QUARANTINED",
 	}
 
+	type GroundedClaim struct {
+		Claim           string   `json:"claim"`
+		EvidenceIDs     []string `json:"evidence_ids"`
+		EpistemicStatus string   `json:"epistemic_status"` // GROUNDED | UNSUPPORTED | UNVERIFIED
+	}
+
+	var claims []GroundedClaim
+	allGrounded := len(validEvidence) > 0
+
+	for _, ev := range validEvidence {
+		claims = append(claims, GroundedClaim{
+			Claim:           fmt.Sprintf("Empirical observation confirmed on endpoint %s (type: %s, integrity verified).", ev.URL, ev.EvidenceType),
+			EvidenceIDs:     []string{ev.ID},
+			EpistemicStatus: "GROUNDED",
+		})
+	}
+
 	hallucinationStatus := "UNVERIFIED_NO_EVIDENCE_CITATIONS"
-	if len(validEvidence) > 0 {
-		hallucinationStatus = "PASSED_ZERO_UNSUPPORTED_CLAIMS"
+	if allGrounded {
+		hallucinationStatus = "EVIDENTIARY_CLAIMS_GROUNDED"
+	}
+
+	suggestedFalsification := "Issue verification probe against observed target endpoint with tenant restriction claim to test authorization boundary."
+	if len(validEvidence) > 0 && validEvidence[0].URL != "" {
+		suggestedFalsification = fmt.Sprintf("Issue non-destructive probe against %s with tenant boundary claim to test scoped authorization controls.", validEvidence[0].URL)
 	}
 
 	// Return structured reasoning guidance grounded strictly in verified evidence
@@ -674,9 +709,10 @@ func (h *Handler) AIAssistedReasoning(w http.ResponseWriter, r *http.Request) {
 		"hypothesis_id":              req.HypothesisID,
 		"cited_evidence_count":       len(validEvidence),
 		"epistemic_guardrail":        "STRICT_EVIDENTIARY_GROUNDING",
+		"claims":                     claims,
 		"quarantined_input":          quarantinedInput,
-		"analysis_summary":           "Empirical evidence indicates clear distinction between unauthenticated token issuance and protected resource access. Competing hypotheses remain active pending differential multi-role observation.",
-		"suggested_falsification":    "Issue POST /v1/auth/token with tenant restriction claim to verify scoped provisioning behavior.",
+		"analysis_summary":           "Reasoning guidance generated from strictly verified, tamper-checked empirical observations. Competing hypotheses remain active pending differential multi-role observation.",
+		"suggested_falsification":    suggestedFalsification,
 		"suggested_missing_evidence": []string{
 			"Authenticated user session token comparison",
 			"Peer service baseline on same cluster domain",

@@ -100,7 +100,9 @@ func (e *Engine) RunReasoningCycle(ctx context.Context, targetID, assetID string
 		CreatedAt:       time.Now(),
 	}
 
-	_ = e.reasoningRepo.RecordReasoningRun(ctx, run)
+	if err := e.reasoningRepo.RecordReasoningRun(ctx, run); err != nil {
+		return nil, fmt.Errorf("failed to persist reasoning run: %w", err)
+	}
 	return run, nil
 }
 

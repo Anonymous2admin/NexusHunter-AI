@@ -615,13 +615,17 @@ func (e *SecurityIntelligenceEngine) ExecuteControlledValidation(
 	}
 
 	// Record in storage
-	_ = e.secRepo.RecordValidationResult(ctx, result)
+	if err := e.secRepo.RecordValidationResult(ctx, result); err != nil {
+		return nil, fmt.Errorf("failed to record validation result: %w", err)
+	}
 
 	// Update candidate state if requested
 	if candidate != nil && success && e.analysisRepo != nil {
 		candidate.State = models.CandidateStateValidated
 		candidate.UpdatedAt = now
-		_ = e.analysisRepo.SaveFindingCandidate(ctx, candidate)
+		if err := e.analysisRepo.SaveFindingCandidate(ctx, candidate); err != nil {
+			return nil, fmt.Errorf("failed to persist candidate validated state: %w", err)
+		}
 	}
 
 	return result, nil

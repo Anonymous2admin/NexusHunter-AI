@@ -361,6 +361,24 @@ func (h *Handler) EvaluateContradiction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Phase 8.2R-FINAL.3 Item 10: Fail-closed Contradiction Evaluation
+	if strings.TrimSpace(req.TargetID) == "" {
+		Error(w, http.StatusBadRequest, "MISSING_TARGET_ID", "target_id is strictly required for contradiction evaluation", "")
+		return
+	}
+	if strings.TrimSpace(req.AssetID) == "" {
+		Error(w, http.StatusBadRequest, "MISSING_ASSET_ID", "asset_id is strictly required; cannot evaluate without explicit asset attribution", "")
+		return
+	}
+	if strings.TrimSpace(req.Endpoint) == "" {
+		Error(w, http.StatusBadRequest, "MISSING_ENDPOINT", "endpoint is strictly required; synthetic fallback endpoints are forbidden", "")
+		return
+	}
+	if len(req.EvidenceRefs) == 0 {
+		Error(w, http.StatusBadRequest, "MISSING_EVIDENCE_CONTEXT", "at least one evidence reference is strictly required; cannot evaluate without evidence context", "")
+		return
+	}
+
 	con, err := h.evidenceEng.EvaluateContradiction(
 		r.Context(), req.TargetID, req.AssetID, req.Endpoint,
 		&req.Expectation, req.ObservedState, req.EvidenceRefs,

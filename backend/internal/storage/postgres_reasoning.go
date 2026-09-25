@@ -558,6 +558,23 @@ func (p *PostgresStorage) UpdateHypothesisStatus(ctx context.Context, id string,
 	return err
 }
 
+// UpdateHypothesisStatusWithGuard transitions status atomically checking the expected previous status.
+func (p *PostgresStorage) UpdateHypothesisStatusWithGuard(ctx context.Context, id string, expectedStatus models.HypothesisStatus, newStatus models.HypothesisStatus) error {
+	query := `UPDATE hypotheses SET status = $1, updated_at = NOW() WHERE id = $2 AND status = $3`
+	res, err := p.db.ExecContext(ctx, query, string(newStatus), id, string(expectedStatus))
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrInvalidState
+	}
+	return nil
+}
+
 // SaveFalsificationCondition stores a falsification test definition.
 func (p *PostgresStorage) SaveFalsificationCondition(ctx context.Context, cond *models.FalsificationCondition) error {
 	refsJSON, _ := json.Marshal(cond.EvidenceRefs)

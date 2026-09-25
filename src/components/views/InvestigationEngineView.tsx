@@ -71,30 +71,66 @@ export const InvestigationEngineView: React.FC<InvestigationEngineViewProps> = (
     if (!activeTargetId) return;
     setIsLoading(true);
     try {
-      const [g, t, inv, diff, cl, mem] = await Promise.all([
-        api.getTargetGraph(activeTargetId).catch(() => null),
-        api.getTemporalChanges(activeTargetId).catch(() => []),
-        api.getInvariants(activeTargetId).catch(() => []),
-        api.getBehaviorDifferences(activeTargetId).catch(() => []),
-        api.getInvestigationClusters(activeTargetId).catch(() => []),
-        api.getResearchMemory(activeTargetId).catch(() => null),
+      const [gRes, tRes, invRes, diffRes, clRes, memRes] = await Promise.allSettled([
+        api.getTargetGraph(activeTargetId),
+        api.getTemporalChanges(activeTargetId),
+        api.getInvariants(activeTargetId),
+        api.getBehaviorDifferences(activeTargetId),
+        api.getInvestigationClusters(activeTargetId),
+        api.getResearchMemory(activeTargetId),
       ]);
 
-      setGraphData(g);
-      setTemporalChanges(t);
-      setInvariants(inv);
-      setBehaviorDiffs(diff);
-      setClusters(cl);
-      setResearchMemory(mem);
+      const loadErrors: string[] = [];
 
-      if (cl.length > 0 && !selectedCluster) {
-        setSelectedCluster(cl[0]);
+      if (gRes.status === 'fulfilled') {
+        setGraphData(gRes.value);
+        if (gRes.value && gRes.value.nodes.length > 0 && !selectedNode) {
+          setSelectedNode(gRes.value.nodes[0]);
+        }
+      } else {
+        loadErrors.push(`Graph: ${gRes.reason?.message || 'Unavailable'}`);
       }
-      if (g && g.nodes.length > 0 && !selectedNode) {
-        setSelectedNode(g.nodes[0]);
+
+      if (tRes.status === 'fulfilled') {
+        setTemporalChanges(tRes.value || []);
+      } else {
+        loadErrors.push(`Temporal Changes: ${tRes.reason?.message || 'Unavailable'}`);
+      }
+
+      if (invRes.status === 'fulfilled') {
+        setInvariants(invRes.value || []);
+      } else {
+        loadErrors.push(`Invariants: ${invRes.reason?.message || 'Unavailable'}`);
+      }
+
+      if (diffRes.status === 'fulfilled') {
+        setBehaviorDiffs(diffRes.value || []);
+      } else {
+        loadErrors.push(`Behavior Differences: ${diffRes.reason?.message || 'Unavailable'}`);
+      }
+
+      if (clRes.status === 'fulfilled') {
+        const clusterData = clRes.value || [];
+        setClusters(clusterData);
+        if (clusterData.length > 0 && !selectedCluster) {
+          setSelectedCluster(clusterData[0]);
+        }
+      } else {
+        loadErrors.push(`Clusters: ${clRes.reason?.message || 'Unavailable'}`);
+      }
+
+      if (memRes.status === 'fulfilled') {
+        setResearchMemory(memRes.value);
+      } else {
+        loadErrors.push(`Research Memory: ${memRes.reason?.message || 'Unavailable'}`);
+      }
+
+      if (loadErrors.length > 0) {
+        showRuntimeError(`Partial intelligence loaded: ${loadErrors.join(' | ')}`);
       }
     } catch (err) {
       console.error('Failed to load intelligence components', err);
+      showRuntimeError(err);
     } finally {
       setIsLoading(false);
     }

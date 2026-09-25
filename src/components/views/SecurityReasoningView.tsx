@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Target,
   ReasoningSignal,
@@ -89,9 +89,11 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
   const [aiPrompt, setAiPrompt] = useState<string>('Evaluate whether unauthenticated 200 response on token endpoint is intentional public behavior or proxy auth-filter bypass.');
   const [aiResult, setAiResult] = useState<any | null>(null);
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
+  const activeTargetIdRef = useRef<string>('');
 
   // Phase 8.2R Item 20: Target Switch Safety - Atomic cleanup of previous target data
   const clearTargetState = useCallback(() => {
+    activeTargetIdRef.current = '';
     setSignals([]);
     setGroups([]);
     setHypotheses([]);
@@ -112,6 +114,7 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
 
   const loadReasoningData = useCallback(async (tid: string) => {
     if (!tid) return;
+    activeTargetIdRef.current = tid;
     setIsLoading(true);
     setError(null);
     setHypothesesStatus('LOADING');
@@ -127,6 +130,9 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
       api.getAssetPermissionMatrix('', tid),
       api.getAssetSecurityControls('', tid),
     ]);
+
+    // Stale response rejection: if target changed while fetching, discard results immediately
+    if (activeTargetIdRef.current !== tid) return;
 
     const newErrors: Record<string, string> = {};
 
@@ -285,7 +291,15 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
     try {
       assertLiveOrThrow('execute investigation step');
       const updated = await api.executeInvestigationStep(invId);
-      setSuccessMessage(`Executed investigation step. Status: ${updated.status}`);
+      if (updated.status === 'SIMULATED') {
+        setSuccessMessage('SIMULATED: No network request was executed.');
+      } else if (updated.status === 'NOT_EXECUTABLE_AUTOMATICALLY') {
+        setSuccessMessage('RESEARCHER ACTION REQUIRED: Step cannot be executed automatically.');
+      } else if (updated.status === 'EXECUTED') {
+        setSuccessMessage('Executed successfully.');
+      } else {
+        setSuccessMessage(`Investigation step updated: ${updated.status}`);
+      }
       await loadReasoningData(targetId);
     } catch (err: any) {
       showRuntimeError(err);
@@ -1036,7 +1050,17 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
                             <span className="rounded bg-slate-900 px-1.5 py-0.5 text-[10px] font-mono text-indigo-400">
                               {step.scope_constraint}
                             </span>
-                            <div className="mt-1 text-[10px] font-mono text-slate-400">{step.status}</div>
+                            <div className="mt-1 text-[10px] font-mono">
+                              {step.status === 'SIMULATED' ? (
+                                <span className="text-amber-400 font-semibold">SIMULATED (No network request)</span>
+                              ) : step.status === 'NOT_EXECUTABLE_AUTOMATICALLY' ? (
+                                <span className="text-cyan-400 font-semibold">RESEARCHER ACTION REQUIRED</span>
+                              ) : step.status === 'EXECUTED' ? (
+                                <span className="text-emerald-400 font-semibold">EXECUTED (Executed successfully.)</span>
+                              ) : (
+                                <span className="text-slate-400">{step.status}</span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       ))}
@@ -1117,30 +1141,29 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 font-mono text-slate-300">
-                  <tr className="hover:bg-slate-800/30">
-                    <td className="py-2.5 px-3 text-indigo-300">/v1/auth/token</td>
-                    <td className="py-2.5 px-3">POST</td>
-                    <td className="py-2.5 px-3">ANONYMOUS</td>
-                    <td className="py-2.5 px-3 text-slate-400">UNKNOWN</td>
-                    <td className="py-2.5 px-3 text-amber-400">ALLOW (200 OK)</td>
-                    <td className="py-2.5 px-3 text-amber-400">DEVIATION</td>
-                  </tr>
-                  <tr className="hover:bg-slate-800/30">
-                    <td className="py-2.5 px-3 text-indigo-300">/v1/auth/token</td>
-                    <td className="py-2.5 px-3">POST</td>
-                    <td className="py-2.5 px-3">AUTHORIZED_USER</td>
-                    <td className="py-2.5 px-3 text-slate-400">ALLOW</td>
-                    <td className="py-2.5 px-3 text-emerald-400">ALLOW (200 OK)</td>
-                    <td className="py-2.5 px-3 text-emerald-400">ALIGNED</td>
-                  </tr>
-                  <tr className="hover:bg-slate-800/30">
-                    <td className="py-2.5 px-3 text-indigo-300">/v1/admin/debug</td>
-                    <td className="py-2.5 px-3">GET</td>
-                    <td className="py-2.5 px-3">ANONYMOUS</td>
-                    <td className="py-2.5 px-3 text-slate-400">DENY</td>
-                    <td className="py-2.5 px-3 text-emerald-400">DENY (401 Unauthorized)</td>
-                    <td className="py-2.5 px-3 text-emerald-400">ALIGNED</td>
-                  </tr>
+                  {permissionMatrix && permissionMatrix.length > 0 ? (
+                    permissionMatrix.map((pm) => (
+                      <tr key={pm.id} className="hover:bg-slate-800/30">
+                        <td className="py-2.5 px-3 text-indigo-300">{pm.endpoint}</td>
+                        <td className="py-2.5 px-3">{pm.method}</td>
+                        <td className="py-2.5 px-3">{pm.role}</td>
+                        <td className="py-2.5 px-3 text-slate-400">{pm.expected_behavior}</td>
+                        <td className="py-2.5 px-3 text-slate-300">{pm.observed_behavior}</td>
+                        <td className={`py-2.5 px-3 font-semibold ${
+                          pm.compliance_status === 'ALIGNED' ? 'text-emerald-400' :
+                          pm.compliance_status === 'DEVIATING' ? 'text-amber-400' : 'text-slate-400'
+                        }`}>
+                          {pm.compliance_status}
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={6} className="py-6 text-center text-slate-500 font-sans">
+                        No empirical permission matrix entries observed for active target yet. Run reasoning cycle or ingest auth observations.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1203,6 +1226,26 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
               </div>
               <p className="text-xs text-slate-200 leading-relaxed">{aiResult.analysis_summary}</p>
 
+              {aiResult.claims && aiResult.claims.length > 0 && (
+                <div className="border-t border-indigo-900/40 pt-2 space-y-1.5 text-xs">
+                  <div className="font-medium text-indigo-300">Verified Evidence-Grounded Claims:</div>
+                  <div className="space-y-1">
+                    {aiResult.claims.map((c: any, idx: number) => (
+                      <div key={idx} className="flex items-start justify-between bg-slate-950/60 p-2 rounded border border-indigo-900/30 text-[11px]">
+                        <span className="text-slate-200">{c.claim}</span>
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono shrink-0 ml-2 ${
+                          c.epistemic_status === 'GROUNDED'
+                            ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/40'
+                            : 'bg-amber-950 text-amber-400'
+                        }`}>
+                          {c.epistemic_status}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="border-t border-indigo-900/40 pt-2 space-y-1.5 text-xs">
                 <div className="font-medium text-indigo-300">Suggested Falsification Action:</div>
                 <div className="text-slate-300 font-mono text-[11px] bg-slate-950/60 p-2 rounded border border-indigo-900/40">
@@ -1261,7 +1304,7 @@ export const SecurityReasoningView: React.FC<SecurityReasoningViewProps> = ({
                     </div>
 
                     <div className="font-mono text-slate-300">
-                      {ev.request?.method || 'GET'} {ev.request?.url || '/'} → Status {ev.response?.status_code || 200}
+                      {ev.request?.method || 'UNKNOWN'} {ev.request?.url || 'N/A'} → Status {ev.response?.status_code !== undefined ? ev.response.status_code : 'N/A'}
                     </div>
 
                     <div className="text-[11px] text-slate-500">

@@ -116,7 +116,10 @@ func (e *Engine) RecordEvidence(ctx context.Context, raw *models.Evidence) (*mod
 				"is_redacted":   sanitized.RedactionStatus.IsRedacted,
 			},
 		}
-		_ = e.storage.RecordTimelineEvent(ctx, timelineEv)
+		if err := e.storage.RecordTimelineEvent(ctx, timelineEv); err != nil {
+			e.logger.Error("failed to record evidence timeline event", slog.Any("error", err), slog.String("evidence_id", sanitized.ID))
+			return nil, fmt.Errorf("failed to persist evidence timeline event: %w", err)
+		}
 	}
 
 	return sanitized, nil
@@ -158,7 +161,7 @@ func (e *Engine) CompareEvidence(ctx context.Context, evidenceAID, evidenceBID s
 	)
 
 	// Record timeline event
-	_ = e.storage.RecordTimelineEvent(ctx, &models.EvidenceTimelineEvent{
+	if err := e.storage.RecordTimelineEvent(ctx, &models.EvidenceTimelineEvent{
 		ID:              "tl-" + uuid.New().String()[:12],
 		TargetID:        diff.TargetID,
 		AssetID:         diff.AssetID,
@@ -179,7 +182,10 @@ func (e *Engine) CompareEvidence(ctx context.Context, evidenceAID, evidenceBID s
 			"is_security_relevant": diff.IsSecurityRelevant,
 			"category":             diff.SemanticDiff.Category,
 		},
-	})
+	}); err != nil {
+		e.logger.Error("failed to record diff timeline event", slog.Any("error", err), slog.String("diff_id", diff.ID))
+		return nil, fmt.Errorf("failed to persist diff timeline event: %w", err)
+	}
 
 	return diff, nil
 }
@@ -197,6 +203,12 @@ func (e *Engine) EvaluateContradiction(
 ) (*models.SecurityContradiction, error) {
 	if expected == nil {
 		return nil, fmt.Errorf("expected security model cannot be nil")
+	}
+	if strings.TrimSpace(targetID) == "" || strings.TrimSpace(assetID) == "" || strings.TrimSpace(endpoint) == "" {
+		return nil, fmt.Errorf("targetID, assetID, and endpoint are strictly required for contradiction evaluation")
+	}
+	if len(evidenceRefs) == 0 {
+		return nil, fmt.Errorf("at least one evidence reference is strictly required; cannot evaluate without evidence context")
 	}
 
 	// If observed matches expected, no contradiction exists
@@ -273,7 +285,7 @@ func (e *Engine) EvaluateContradiction(
 			return nil, err
 		}
 
-		_ = e.storage.RecordTimelineEvent(ctx, &models.EvidenceTimelineEvent{
+		if err := e.storage.RecordTimelineEvent(ctx, &models.EvidenceTimelineEvent{
 			ID:              "tl-" + uuid.New().String()[:12],
 			TargetID:        targetID,
 			AssetID:         assetID,
@@ -295,7 +307,10 @@ func (e *Engine) EvaluateContradiction(
 				"status":             contradiction.Status,
 				"severity":           contradiction.Severity,
 			},
-		})
+		}); err != nil {
+			e.logger.Error("failed to record contradiction timeline event", slog.Any("error", err), slog.String("contradiction_id", contradiction.ID))
+			return nil, fmt.Errorf("failed to persist contradiction timeline event: %w", err)
+		}
 	}
 
 	e.logger.Info("contradiction created",

@@ -36,14 +36,22 @@ export const RuntimeProvider: React.FC<{ children: ReactNode }> = ({ children })
         return;
       }
 
-      // Check authoritative health mode
-      if (h.mode === 'LIVE' || api.getLastOrigin() === 'LIVE_BACKEND') {
+      // Check authoritative runtime and storage mode
+      const rawRuntimeMode = h.runtime_mode;
+      const rawStorageMode = h.storage_mode;
+
+      if (rawRuntimeMode === 'LIVE_BACKEND' && rawStorageMode === 'POSTGRES') {
         setMode('LIVE');
-      } else if (h.mode === 'DEMO_FALLBACK' || api.getLastOrigin() === 'DEMO_SYNTHETIC') {
+      } else if (
+        rawRuntimeMode === 'DEMO_SYNTHETIC' ||
+        rawStorageMode === 'MEMORY' ||
+        h.mode === 'DEMO_FALLBACK' ||
+        api.getLastOrigin() === 'DEMO_SYNTHETIC'
+      ) {
         setMode('DEMO');
-      } else if (h.mode === 'PARTIAL') {
+      } else if (rawRuntimeMode === 'PARTIAL' || h.mode === 'PARTIAL') {
         setMode('PARTIAL');
-      } else if (h.mode === 'OFFLINE') {
+      } else if (rawRuntimeMode === 'OFFLINE' || rawStorageMode === 'UNAVAILABLE' || h.mode === 'OFFLINE') {
         setMode('OFFLINE');
       } else {
         // Unexpected or malformed mode must be UNKNOWN, NOT DEMO
@@ -97,7 +105,7 @@ export const RuntimeProvider: React.FC<{ children: ReactNode }> = ({ children })
       if (mode === 'DEMO') {
         const canExecuteDemo = allowDemoOverride !== undefined ? allowDemoOverride : allowDemoMutations;
         if (!canExecuteDemo) {
-          const msg = `Action '${operationName}' rejected: Mutation operations against live environments require an active LIVE backend connection. Currently running in DEMO mode. Enable 'Sandbox Writes' in the top banner to permit synthetic sandbox mutations.`;
+          const msg = `Action '${operationName}' rejected: Real live mutations require runtime_mode == LIVE_BACKEND and storage_mode == POSTGRES. Currently running in LOCAL_MEMORY / DEMO-SAFE state. Enable 'Sandbox Writes' in the top banner to permit SIMULATED DEMO ACTION.`;
           setRuntimeError(msg);
           throw new Error(msg);
         }

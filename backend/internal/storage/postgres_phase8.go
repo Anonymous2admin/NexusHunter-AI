@@ -155,18 +155,22 @@ func (s *PostgresPhase8Storage) ListImportReviews(ctx context.Context) ([]*model
 }
 
 func (s *PostgresPhase8Storage) ConfirmImportReview(ctx context.Context, id string, selectedRootDomain string, targetID string) error {
+	return s.ConfirmImportReviewProvenance(ctx, id, selectedRootDomain, targetID, "lead-researcher")
+}
+
+func (s *PostgresPhase8Storage) ConfirmImportReviewProvenance(ctx context.Context, id string, selectedRootDomain string, targetID string, confirmedBy string) error {
 	query := `
 		UPDATE scope_imports
-		SET status = 'CONFIRMED', selected_root_domain = $2, target_id = $3, confirmed_at = $4
-		WHERE id = $1;
+		SET status = 'CONFIRMED', selected_root_domain = $2, target_id = $3, confirmed_at = $4, confirmed_by = $5
+		WHERE id = $1 AND status != 'CONFIRMED';
 	`
-	res, err := s.db.ExecContext(ctx, query, id, selectedRootDomain, targetID, time.Now().UTC())
+	res, err := s.db.ExecContext(ctx, query, id, selectedRootDomain, targetID, time.Now().UTC(), confirmedBy)
 	if err != nil {
 		return err
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return ErrNotFound
+		return ErrInvalidState
 	}
 	return nil
 }
