@@ -648,8 +648,11 @@ func TestJobLifecycleAPI(t *testing.T) {
 		t.Fatalf("expected 201 Created for POST /api/jobs, got %d", rec.Code)
 	}
 
+	var createdResp StandardResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &createdResp)
+	jobData, _ := json.Marshal(createdResp.Data)
 	var createdJob models.ScanJob
-	_ = json.NewDecoder(rec.Body).Decode(&createdJob)
+	_ = json.Unmarshal(jobData, &createdJob)
 	if createdJob.Status != models.JobStatusQueued {
 		t.Fatalf("expected status QUEUED, got %s", createdJob.Status)
 	}
@@ -670,8 +673,11 @@ func TestJobLifecycleAPI(t *testing.T) {
 		t.Fatalf("expected 200 OK for start, got %d", rec.Code)
 	}
 
+	var startResp StandardResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &startResp)
+	startData, _ := json.Marshal(startResp.Data)
 	var runningJob models.ScanJob
-	_ = json.NewDecoder(rec.Body).Decode(&runningJob)
+	_ = json.Unmarshal(startData, &runningJob)
 	if runningJob.Status != models.JobStatusRunning || runningJob.StartedAt == nil {
 		t.Fatalf("expected status RUNNING with started_at set")
 	}
@@ -684,8 +690,11 @@ func TestJobLifecycleAPI(t *testing.T) {
 		t.Fatalf("expected 200 OK for complete, got %d", rec.Code)
 	}
 
+	var compResp StandardResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &compResp)
+	compData, _ := json.Marshal(compResp.Data)
 	var completedJob models.ScanJob
-	_ = json.NewDecoder(rec.Body).Decode(&completedJob)
+	_ = json.Unmarshal(compData, &completedJob)
 	if completedJob.Status != models.JobStatusCompleted || completedJob.CompletedAt == nil {
 		t.Fatalf("expected status COMPLETED with completed_at set")
 	}
@@ -706,8 +715,11 @@ func TestJobLifecycleAPI(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPost, "/api/jobs", bytes.NewReader(createPayload2))
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
+	var createdResp2 StandardResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &createdResp2)
+	jobData2, _ := json.Marshal(createdResp2.Data)
 	var job2 models.ScanJob
-	_ = json.NewDecoder(rec.Body).Decode(&job2)
+	_ = json.Unmarshal(jobData2, &job2)
 
 	// Cancel from QUEUED
 	req = httptest.NewRequest(http.MethodPost, "/api/jobs/"+job2.ID+"/cancel", nil)

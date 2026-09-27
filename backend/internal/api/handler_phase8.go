@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/cloudintel"
@@ -80,8 +81,21 @@ func (h *Handler) ImportScope(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.p8ScopeImportRepo != nil {
-		_ = h.p8ScopeImportRepo.SaveImportReview(ctx, review)
+	if h.p8ScopeImportRepo == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"error": "scope import repository unavailable",
+			"code":  "SCOPE_REPO_UNAVAILABLE",
+		})
+		return
+	}
+
+	if err := h.p8ScopeImportRepo.SaveImportReview(ctx, review); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error":  "failed to persist scope review",
+			"code":   "SCOPE_PERSISTENCE_FAILED",
+			"detail": err.Error(),
+		})
+		return
 	}
 
 	writeJSON(w, http.StatusCreated, review)
@@ -157,12 +171,27 @@ func (h *Handler) ConfirmScopeImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	selectedRoot := req.SelectedRootDomain
-	// Phase 8.2R-FINAL.3 Item 5: Zero automatic primary-root selection.
-	// Even for a single root domain, explicit confirmation from the caller is mandatory.
+	selectedRoot := strings.TrimSpace(req.SelectedRootDomain)
 	if selectedRoot == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "explicit selected_root_domain is strictly required; automatic primary-root selection is disabled",
+		})
+		return
+	}
+
+	// Requirement 7: Explicit operator identity is required. Never fabricate provenance!
+	confirmedBy := strings.TrimSpace(req.ConfirmedBy)
+	if confirmedBy == "" {
+		if headerOp := strings.TrimSpace(r.Header.Get("X-Operator-ID")); headerOp != "" {
+			confirmedBy = headerOp
+		} else if headerRes := strings.TrimSpace(r.Header.Get("X-Researcher-ID")); headerRes != "" {
+			confirmedBy = headerRes
+		}
+	}
+	if confirmedBy == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error": "CONFIRMED_BY_REQUIRED: Explicit operator identity is required for scope confirmation provenance; automatic identity fabrication is forbidden",
+			"code":  "CONFIRMED_BY_REQUIRED",
 		})
 		return
 	}
@@ -189,9 +218,6 @@ func (h *Handler) ConfirmScopeImport(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now().UTC()
 
-	// Section 10 Target Creation Invariant:
-	// A target created from an imported scope must contain:
-	// target_id, scope_import_id, canonical_scope_hash, primary_root_domain, root_domains, include/exclude rules, confirmation_timestamp
 	target := &models.Target{
 		ID:                    "target-" + strconv.FormatInt(time.Now().UnixNano(), 36),
 		Name:                  targetName,
@@ -213,39 +239,26 @@ func (h *Handler) ConfirmScopeImport(w http.ResponseWriter, r *http.Request) {
 		target.ScopeConfig.Exclude = append(target.ScopeConfig.Exclude, rev.CanonicalScope.ExcludeHosts...)
 	}
 
-	confirmedBy := req.ConfirmedBy
-	if confirmedBy == "" {
-		confirmedBy = "lead-researcher"
-	}
-
-	if err := h.p8ScopeImportRepo.ConfirmImportReviewProvenance(ctx, id, selectedRoot, target.ID, confirmedBy); err != nil {
-		if errors.Is(err, storage.ErrInvalidState) {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": "scope import has already been confirmed"})
+	// Requirement 1: Authoritative transactional confirmation and target creation
+	createdTarget, confirmedReview, err := h.p8ScopeImportRepo.ConfirmScopeAndCreateTarget(ctx, id, selectedRoot, target, confirmedBy, req.SelectionReason)
+	if err != nil {
+		if errors.Is(err, storage.ErrInvalidState) || errors.Is(err, storage.ErrConflict) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "scope import has already been confirmed or target conflict"})
 			return
 		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to record scope confirmation: " + err.Error()})
 		return
 	}
 
-	if err := h.storage.Create(ctx, target); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create target: " + err.Error()})
-		return
-	}
-	rev.Status = "CONFIRMED"
-	rev.TargetID = target.ID
-	rev.SelectedRootDomain = selectedRoot
-	rev.ConfirmedBy = confirmedBy
-	rev.ConfirmedAt = &now
-	rev.SelectionReason = req.SelectionReason
-
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"status":                 "CONFIRMED",
-		"target_id":              target.ID,
-		"selected_root":          selectedRoot,
-		"confirmed_by":           confirmedBy,
-		"source_import_id":       rev.ID,
-		"canonical_scope_sha256": rev.CanonicalScopeSHA256,
-		"scope_review":           rev,
+		"status":                        "CONFIRMED",
+		"target_id":                     createdTarget.ID,
+		"selected_root":                 selectedRoot,
+		"confirmed_by":                  confirmedBy,
+		"source_import_id":              confirmedReview.ID,
+		"canonical_scope_sha256":        confirmedReview.CanonicalScopeSHA256,
+		"authorization_snapshot_sha256": confirmedReview.AuthorizationSnapshotSHA256,
+		"scope_review":                  confirmedReview,
 	})
 }
 

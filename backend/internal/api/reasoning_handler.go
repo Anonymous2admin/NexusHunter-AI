@@ -113,6 +113,45 @@ func (h *Handler) CreateHypothesis(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "INVALID_BODY", "failed to decode hypothesis body", err.Error())
 		return
 	}
+
+	// Phase 8.2R-FINAL.4 Requirement 17-19: Cross-Entity Ownership & Attribution Verification
+	if strings.TrimSpace(hyp.TargetID) == "" {
+		Error(w, http.StatusBadRequest, "TARGET_ID_REQUIRED", "target_id is strictly required for hypothesis creation", "")
+		return
+	}
+	if _, err := h.verifyTargetExistsAndActive(r.Context(), hyp.TargetID); err != nil {
+		Error(w, http.StatusBadRequest, "TARGET_VALIDATION_FAILED", err.Error(), "")
+		return
+	}
+
+	if hyp.AssetID != "" {
+		if err := h.verifyAssetBelongsToTarget(r.Context(), hyp.AssetID, hyp.TargetID); err != nil {
+			Error(w, http.StatusBadRequest, "ASSET_TARGET_MISMATCH", err.Error(), "")
+			return
+		}
+	}
+
+	for _, eid := range hyp.SupportingEvidence {
+		if _, err := h.verifyEvidenceBelongsToTarget(r.Context(), eid, hyp.TargetID, hyp.AssetID); err != nil {
+			Error(w, http.StatusBadRequest, "EVIDENCE_TARGET_MISMATCH", err.Error(), "")
+			return
+		}
+	}
+
+	for _, eid := range hyp.ContradictingEvidence {
+		if _, err := h.verifyEvidenceBelongsToTarget(r.Context(), eid, hyp.TargetID, hyp.AssetID); err != nil {
+			Error(w, http.StatusBadRequest, "EVIDENCE_TARGET_MISMATCH", err.Error(), "")
+			return
+		}
+	}
+
+	for _, sid := range hyp.SupportingSignals {
+		if _, err := h.verifySignalBelongsToTarget(r.Context(), sid, hyp.TargetID); err != nil {
+			Error(w, http.StatusBadRequest, "SIGNAL_TARGET_MISMATCH", err.Error(), "")
+			return
+		}
+	}
+
 	if hyp.ID == "" {
 		hyp.ID = fmt.Sprintf("hyp-%d", time.Now().UnixNano())
 	}
@@ -318,8 +357,10 @@ func (h *Handler) ListInvestigations(w http.ResponseWriter, r *http.Request) {
 // PlanInvestigation handles POST /api/investigations
 func (h *Handler) PlanInvestigation(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		HypothesisID string `json:"hypothesis_id"`
-		CreatedBy    string `json:"created_by"`
+		TargetID      string `json:"target_id"`
+		HypothesisID  string `json:"hypothesis_id"`
+		AuthContextID string `json:"auth_context_id"`
+		CreatedBy     string `json:"created_by"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		Error(w, http.StatusBadRequest, "INVALID_BODY", "failed to decode json body", err.Error())
@@ -329,6 +370,31 @@ func (h *Handler) PlanInvestigation(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "INVALID_PARAM", "missing hypothesis_id", "")
 		return
 	}
+
+	// Phase 8.2R-FINAL.4 Requirement 17-18: Verify hypothesis exists and target ownership
+	hyp, err := h.reasoningRepo.GetHypothesis(r.Context(), req.HypothesisID)
+	if err != nil || hyp == nil {
+		Error(w, http.StatusNotFound, "HYPOTHESIS_NOT_FOUND", fmt.Sprintf("hypothesis '%s' not found", req.HypothesisID), "")
+		return
+	}
+
+	if _, err := h.verifyTargetExistsAndActive(r.Context(), hyp.TargetID); err != nil {
+		Error(w, http.StatusBadRequest, "TARGET_VALIDATION_FAILED", err.Error(), "")
+		return
+	}
+
+	if req.TargetID != "" && req.TargetID != hyp.TargetID {
+		Error(w, http.StatusBadRequest, "TARGET_MISMATCH", fmt.Sprintf("hypothesis '%s' belongs to target '%s', not '%s'", hyp.ID, hyp.TargetID, req.TargetID), "")
+		return
+	}
+
+	if req.AuthContextID != "" {
+		if _, err := h.verifyAuthContextBelongsToTarget(r.Context(), req.AuthContextID, hyp.TargetID); err != nil {
+			Error(w, http.StatusBadRequest, "AUTH_CONTEXT_TARGET_MISMATCH", err.Error(), "")
+			return
+		}
+	}
+
 	if req.CreatedBy == "" {
 		req.CreatedBy = "RESEARCHER"
 	}
@@ -556,12 +622,61 @@ func (h *Handler) ListAssetPermissionMatrix(w http.ResponseWriter, r *http.Reque
 // RecordPermissionMatrixEntry handles POST /api/assets/{id}/permission-matrix
 func (h *Handler) RecordPermissionMatrixEntry(w http.ResponseWriter, r *http.Request) {
 	assetID := r.PathValue("id")
+	if strings.TrimSpace(assetID) == "" {
+		Error(w, http.StatusBadRequest, "INVALID_PARAM", "asset id is required", "")
+		return
+	}
 	var entry models.PermissionMatrixEntry
 	if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
 		Error(w, http.StatusBadRequest, "INVALID_BODY", "failed to decode matrix entry", err.Error())
 		return
 	}
 	entry.AssetID = assetID
+
+	// Phase 8.2R-FINAL.4 Requirement 21: Asset ID from URL is authoritative.
+	// Verify asset exists and belongs to intended target/context.
+	allAssets, err := h.reconRepo.ListAssets(r.Context(), "")
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list assets", err.Error())
+		return
+	}
+	var foundAsset *models.Asset
+	for _, a := range allAssets {
+		if a.ID == assetID {
+			foundAsset = a
+			break
+		}
+	}
+	if foundAsset == nil {
+		Error(w, http.StatusNotFound, "ASSET_NOT_FOUND", fmt.Sprintf("asset '%s' not found", assetID), "")
+		return
+	}
+
+	if entry.TargetID != "" && entry.TargetID != foundAsset.TargetID {
+		Error(w, http.StatusBadRequest, "ASSET_TARGET_MISMATCH", fmt.Sprintf("asset '%s' belongs to target '%s', not '%s'", assetID, foundAsset.TargetID, entry.TargetID), "")
+		return
+	}
+	entry.TargetID = foundAsset.TargetID
+
+	if _, err := h.verifyTargetExistsAndActive(r.Context(), entry.TargetID); err != nil {
+		Error(w, http.StatusBadRequest, "TARGET_VALIDATION_FAILED", err.Error(), "")
+		return
+	}
+
+	if entry.ContextID != "" {
+		if _, err := h.verifyAuthContextBelongsToTarget(r.Context(), entry.ContextID, entry.TargetID); err != nil {
+			Error(w, http.StatusBadRequest, "AUTH_CONTEXT_TARGET_MISMATCH", err.Error(), "")
+			return
+		}
+	}
+
+	for _, eid := range entry.EvidenceRefs {
+		if _, err := h.verifyEvidenceBelongsToTarget(r.Context(), eid, entry.TargetID, entry.AssetID); err != nil {
+			Error(w, http.StatusBadRequest, "EVIDENCE_TARGET_MISMATCH", err.Error(), "")
+			return
+		}
+	}
+
 	if entry.ID == "" {
 		entry.ID = fmt.Sprintf("pme-%d", time.Now().UnixNano())
 	}
@@ -601,6 +716,30 @@ func (h *Handler) ListAuthContexts(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, contexts)
 }
 
+func sanitizeAuthHeaders(headers map[string]string) map[string]string {
+	if headers == nil {
+		return nil
+	}
+	cleaned := make(map[string]string, len(headers))
+	secretKeys := []string{"authorization", "proxy-authorization", "password", "token", "secret", "cookie", "x-api-key"}
+	for k, v := range headers {
+		lowerK := strings.ToLower(k)
+		isSecret := false
+		for _, sk := range secretKeys {
+			if strings.Contains(lowerK, sk) {
+				isSecret = true
+				break
+			}
+		}
+		if isSecret {
+			cleaned[k] = "[REDACTED_CREDENTIAL]"
+		} else {
+			cleaned[k] = v
+		}
+	}
+	return cleaned
+}
+
 // CreateAuthContext handles POST /api/auth-contexts
 func (h *Handler) CreateAuthContext(w http.ResponseWriter, r *http.Request) {
 	var ac models.AuthContext
@@ -608,6 +747,28 @@ func (h *Handler) CreateAuthContext(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "INVALID_BODY", "failed to decode auth context", err.Error())
 		return
 	}
+
+	// Phase 8.2R-FINAL.4 Requirement 20: Validate target, scope, ownership; do not store raw credentials
+	if strings.TrimSpace(ac.TargetID) == "" {
+		Error(w, http.StatusBadRequest, "TARGET_ID_REQUIRED", "target_id is strictly required for auth context", "")
+		return
+	}
+	if _, err := h.verifyTargetExistsAndActive(r.Context(), ac.TargetID); err != nil {
+		Error(w, http.StatusBadRequest, "TARGET_VALIDATION_FAILED", err.Error(), "")
+		return
+	}
+
+	if strings.HasPrefix(ac.ScopeConstraint, "ast-") {
+		if err := h.verifyAssetBelongsToTarget(r.Context(), ac.ScopeConstraint, ac.TargetID); err != nil {
+			Error(w, http.StatusBadRequest, "ASSET_TARGET_MISMATCH", err.Error(), "")
+			return
+		}
+	}
+
+	if ac.Headers != nil {
+		ac.Headers = sanitizeAuthHeaders(ac.Headers)
+	}
+
 	if ac.ID == "" {
 		ac.ID = fmt.Sprintf("ctx-%d", time.Now().UnixNano())
 	}
@@ -629,6 +790,22 @@ func (h *Handler) TriggerReasoningCycle(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Phase 8.2R-FINAL.4 Requirement 17: Cross-Entity Ownership Audit
+	if strings.TrimSpace(req.TargetID) == "" {
+		Error(w, http.StatusBadRequest, "TARGET_ID_REQUIRED", "target_id is required", "")
+		return
+	}
+	if _, err := h.verifyTargetExistsAndActive(r.Context(), req.TargetID); err != nil {
+		Error(w, http.StatusBadRequest, "TARGET_VALIDATION_FAILED", err.Error(), "")
+		return
+	}
+	if req.AssetID != "" {
+		if err := h.verifyAssetBelongsToTarget(r.Context(), req.AssetID, req.TargetID); err != nil {
+			Error(w, http.StatusBadRequest, "ASSET_TARGET_MISMATCH", err.Error(), "")
+			return
+		}
+	}
+
 	run, err := h.reasoningEng.RunReasoningCycle(r.Context(), req.TargetID, req.AssetID)
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "REASONING_FAILED", "failed to execute reasoning cycle", err.Error())
@@ -648,6 +825,27 @@ func (h *Handler) AIAssistedReasoning(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		Error(w, http.StatusBadRequest, "INVALID_BODY", "failed to decode assist request", err.Error())
 		return
+	}
+
+	// Phase 8.2R-FINAL.4 Requirement 17-18: Target isolation & ownership verification
+	if strings.TrimSpace(req.TargetID) == "" {
+		Error(w, http.StatusBadRequest, "TARGET_ID_REQUIRED", "target_id is strictly required for AI reasoning assist", "")
+		return
+	}
+	if _, err := h.verifyTargetExistsAndActive(r.Context(), req.TargetID); err != nil {
+		Error(w, http.StatusBadRequest, "TARGET_VALIDATION_FAILED", err.Error(), "")
+		return
+	}
+	if req.HypothesisID != "" {
+		hyp, err := h.reasoningRepo.GetHypothesis(r.Context(), req.HypothesisID)
+		if err != nil || hyp == nil {
+			Error(w, http.StatusBadRequest, "HYPOTHESIS_NOT_FOUND", "hypothesis not found", "")
+			return
+		}
+		if hyp.TargetID != req.TargetID {
+			Error(w, http.StatusBadRequest, "HYPOTHESIS_TARGET_MISMATCH", fmt.Sprintf("hypothesis '%s' belongs to target '%s', not '%s'", hyp.ID, hyp.TargetID, req.TargetID), "")
+			return
+		}
 	}
 
 	// Phase 8.2R-FINAL.1: Strict Citation Verification Pipeline

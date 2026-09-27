@@ -7,6 +7,7 @@ type ScopeNormalization struct {
 	Original   string `json:"original"`
 	Normalized string `json:"normalized"`
 	Field      string `json:"field"`
+	TokenType  string `json:"token_type,omitempty"` // "STRUCTURAL_KEY", "HOSTNAME", "DOMAIN", "URL", "REGEX", "PATH", "PORT", "IDENTIFIER", "FREE_TEXT"
 	Reason     string `json:"reason"`
 	Severity   string `json:"severity"` // "INFO", "WARNING", "CRITICAL"
 }
@@ -27,15 +28,17 @@ type PathRule struct {
 
 // CanonicalScope is the unified internal representation of authorized research boundaries.
 type CanonicalScope struct {
-	PrimaryRootDomain string               `json:"primary_root_domain"`
-	RootDomains       []string             `json:"root_domains"`
-	IncludeHosts      []AdvancedScopeRule  `json:"include_hosts"`
-	ExcludeHosts      []AdvancedScopeRule  `json:"exclude_hosts"`
-	IncludeURLs       []AdvancedScopeRule  `json:"include_urls"`
-	ExcludeURLs       []AdvancedScopeRule  `json:"exclude_urls"`
-	PathRules         []PathRule           `json:"path_rules"`
-	SourceFiles       []ScopeSource        `json:"source_files"`
-	Normalizations    []ScopeNormalization `json:"normalizations"`
+	PrimaryRootDomain          string               `json:"primary_root_domain,omitempty"` // Deprecated; unauthoritative before confirmation
+	ConfirmedPrimaryRootDomain string               `json:"confirmed_primary_root_domain,omitempty"`
+	DiscoveredRootCandidates   []string             `json:"discovered_root_candidates"`
+	RootDomains                []string             `json:"root_domains"`
+	IncludeHosts               []AdvancedScopeRule  `json:"include_hosts"`
+	ExcludeHosts               []AdvancedScopeRule  `json:"exclude_hosts"`
+	IncludeURLs                []AdvancedScopeRule  `json:"include_urls"`
+	ExcludeURLs                []AdvancedScopeRule  `json:"exclude_urls"`
+	PathRules                  []PathRule           `json:"path_rules"`
+	SourceFiles                []ScopeSource        `json:"source_files"`
+	Normalizations             []ScopeNormalization `json:"normalizations"`
 }
 
 // RootDomainCandidate represents an extracted root domain awaiting human confirmation.
@@ -69,6 +72,7 @@ type ScopeImportReview struct {
 	OriginalFileSHA256           string                 `json:"original_file_sha256"`
 	CanonicalScopeSHA256         string                 `json:"canonical_scope_sha256"`
 	NormalizationManifestSHA256  string                 `json:"normalization_manifest_sha256"`
+	AuthorizationSnapshotSHA256  string                 `json:"authorization_snapshot_sha256,omitempty"`
 	SelectionReason              string                 `json:"selection_reason,omitempty"`
 	TargetID                     string                 `json:"target_id,omitempty"`
 	ConfirmedBy                  string                 `json:"confirmed_by,omitempty"`

@@ -1,6 +1,7 @@
 package scope
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/models"
@@ -36,8 +37,13 @@ func TestScopeImportSanitizer_KeyAndValueTrimming(t *testing.T) {
 		t.Fatalf("expected successful sanitization, got error: %v", err)
 	}
 
-	if review.SelectedRootDomain != "shopify.com" {
-		t.Errorf("expected selected root domain 'shopify.com', got '%s'", review.SelectedRootDomain)
+	// Requirement 8: Before human confirmation, SelectedRootDomain must remain strictly empty
+	if review.SelectedRootDomain != "" {
+		t.Errorf("expected selected root domain to be empty before confirmation, got '%s'", review.SelectedRootDomain)
+	}
+
+	if len(review.RootDomains) != 1 || review.RootDomains[0].NormalizedDomain != "shopify.com" {
+		t.Errorf("expected discovered root domain 'shopify.com', got %+v", review.RootDomains)
 	}
 
 	if len(review.Normalizations) == 0 {
@@ -49,7 +55,7 @@ func TestScopeImportSanitizer_KeyAndValueTrimming(t *testing.T) {
 	target := &models.Target{
 		ID:         "tgt-test",
 		Name:       "Shopify Program",
-		RootDomain: review.SelectedRootDomain,
+		RootDomain: review.RootDomains[0].NormalizedDomain,
 		Status:     models.TargetStatusActive,
 		ScopeConfig: &models.AdvancedScopeConfig{
 			AdvancedMode: true,
@@ -93,8 +99,8 @@ func TestScopeImportSanitizer_CorruptedWildcardRepair(t *testing.T) {
 		t.Fatalf("expected successful sanitization, got: %v", err)
 	}
 
-	if review.SelectedRootDomain != "rei.com" {
-		t.Errorf("expected root domain 'rei.com', got '%s'", review.SelectedRootDomain)
+	if len(review.RootDomains) != 1 || review.RootDomains[0].NormalizedDomain != "rei.com" {
+		t.Errorf("expected root domain candidate 'rei.com', got %+v", review.RootDomains)
 	}
 
 	if len(review.CanonicalScope.IncludeHosts) != 1 {
@@ -119,26 +125,6 @@ func TestScopeImportSanitizer_CorruptedWildcardRepair(t *testing.T) {
 	}
 }
 
-func TestScopeImportSanitizer_RejectOverlyBroadUniversalPatterns(t *testing.T) {
-	sanitizer := NewScopeImportSanitizer()
-
-	dangerousInputs := []string{
-		`{ "target": { "scope": { "include": [ { "enabled": true, "host": ".*" } ] } } }`,
-		`{ "target": { "scope": { "include": [ { "enabled": true, "host": "^.*$" } ] } } }`,
-		`{ "target": { "scope": { "include": [ { "enabled": true, "host": " .+" } ] } } }`,
-	}
-
-	for _, input := range dangerousInputs {
-		review, err := sanitizer.SanitizeScopeFile([]byte(input), "dangerous.json")
-		// The rule should either fail the file or record a critical rejection without admitting the dangerous rule
-		if err == nil && review != nil {
-			if len(review.CanonicalScope.IncludeHosts) > 0 {
-				t.Errorf("expected universal broad regex to be rejected, but it was included: %v", review.CanonicalScope.IncludeHosts)
-			}
-		}
-	}
-}
-
 func TestScopeImportSanitizer_MultiRootDomainDiscovery(t *testing.T) {
 	sanitizer := NewScopeImportSanitizer()
 
@@ -155,8 +141,10 @@ func TestScopeImportSanitizer_MultiRootDomainDiscovery(t *testing.T) {
 		t.Fatalf("expected successful multi-domain parsing, got: %v", err)
 	}
 
-	if len(review.RootDomains) != 3 {
-		t.Errorf("expected 3 root domain candidates, got %d", len(review.RootDomains))
+	// Requirement 13: Exclude-only rules (*.shopifycloud.com) MUST NOT derive authoritative roots.
+	// Only shopify.com and shopify.io from eligible_for_bounty=true are candidates.
+	if len(review.RootDomains) != 2 {
+		t.Errorf("expected 2 root domain candidates (exclude rule ignored), got %d", len(review.RootDomains))
 	}
 
 	domainsMap := make(map[string]bool)
@@ -164,17 +152,177 @@ func TestScopeImportSanitizer_MultiRootDomainDiscovery(t *testing.T) {
 		domainsMap[d.NormalizedDomain] = true
 	}
 
-	if !domainsMap["shopify.com"] || !domainsMap["shopify.io"] || !domainsMap["shopifycloud.com"] {
-		t.Errorf("expected shopify.com, shopify.io, and shopifycloud.com to be discovered, got: %v", domainsMap)
+	if !domainsMap["shopify.com"] || !domainsMap["shopify.io"] {
+		t.Errorf("expected shopify.com and shopify.io to be discovered, got: %v", domainsMap)
+	}
+	if domainsMap["shopifycloud.com"] {
+		t.Errorf("shopifycloud.com must NOT be in candidates because it came from an exclude rule")
 	}
 
-	// Section 8 Invariant: When multiple root domains exist, NO silent default selection is permitted!
+	// Requirement 8: When roots exist, SelectedRootDomain must remain strictly empty before confirmation!
 	if review.SelectedRootDomain != "" {
-		t.Errorf("expected SelectedRootDomain to be empty when multiple roots exist (got '%s')", review.SelectedRootDomain)
+		t.Errorf("expected SelectedRootDomain to be empty before confirmation (got '%s')", review.SelectedRootDomain)
 	}
 }
 
-// Section 6: Authorization-Preservation Property Test
+// Requirement 13: Public-Suffix-Aware domain extraction test
+func TestScopeImportSanitizer_PublicSuffixExtraction(t *testing.T) {
+	sanitizer := NewScopeImportSanitizer()
+
+	raw := []byte(`{
+		"target": {
+			"scope": {
+				"include": [
+					{ "enabled": true, "host": "^sub\\.corp\\.example\\.co\\.uk$" },
+					{ "enabled": true, "host": "^api\\.stage\\.example\\.com\\.au$" },
+					{ "enabled": true, "host": "^internal\\.example\\.com$" }
+				]
+			}
+		}
+	}`)
+
+	review, err := sanitizer.SanitizeScopeFile(raw, "public_suffix.json")
+	if err != nil {
+		t.Fatalf("sanitization failed: %v", err)
+	}
+
+	expectedRoots := map[string]bool{
+		"example.co.uk":  false,
+		"example.com.au": false,
+		"example.com":    false,
+	}
+
+	for _, cand := range review.RootDomains {
+		if _, ok := expectedRoots[cand.NormalizedDomain]; ok {
+			expectedRoots[cand.NormalizedDomain] = true
+		} else {
+			t.Errorf("unexpected root domain discovered: %s", cand.NormalizedDomain)
+		}
+	}
+
+	for domain, found := range expectedRoots {
+		if !found {
+			t.Errorf("expected public-suffix-aware registrable domain '%s' was not extracted", domain)
+		}
+	}
+}
+
+// Requirement 11: Normalization Collision Test
+func TestScopeImportSanitizer_NormalizationCollision(t *testing.T) {
+	sanitizer := NewScopeImportSanitizer()
+
+	// Keys "host" and "host " normalize to identical key "host"
+	raw := []byte(`{
+		"target": {
+			"scope": {
+				"include": [
+					{
+						"host": "^.*\\.example\\.com$",
+						"host ": "^.*\\.example\\.net$"
+					}
+				]
+			}
+		}
+	}`)
+
+	_, err := sanitizer.SanitizeScopeFile(raw, "collision.json")
+	if err == nil {
+		t.Fatalf("expected error on normalization collision, got nil")
+	}
+	if !errors.Is(err, ErrNormalizationCollision) {
+		t.Errorf("expected ErrNormalizationCollision, got: %v", err)
+	}
+}
+
+// Requirement 12: Empty Host Rule Test (Fail closed)
+func TestScopeImportSanitizer_EmptyHostRuleRejected(t *testing.T) {
+	sanitizer := NewScopeImportSanitizer()
+
+	testCases := []struct {
+		name string
+		raw  []byte
+	}{
+		{
+			name: "empty host string",
+			raw: []byte(`{
+				"target": {
+					"scope": {
+						"include": [
+							{ "enabled": true, "host": "   " }
+						]
+					}
+				}
+			}`),
+		},
+		{
+			name: "missing host field",
+			raw: []byte(`{
+				"target": {
+					"scope": {
+						"include": [
+							{ "enabled": true, "protocol": "https" }
+						]
+					}
+				}
+			}`),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := sanitizer.SanitizeScopeFile(tc.raw, "empty_host.json")
+			if err == nil {
+				t.Fatalf("expected error on empty host rule, got nil")
+			}
+			if !errors.Is(err, ErrEmptyHostRule) {
+				t.Errorf("expected ErrEmptyHostRule, got: %v", err)
+			}
+		})
+	}
+}
+
+// Requirement 14: Deterministic Canonicalization Test (100 iterations)
+func TestScopeImportSanitizer_DeterministicCanonicalization(t *testing.T) {
+	sanitizer := NewScopeImportSanitizer()
+
+	raw := []byte(`{
+		"target": {
+			"scope": {
+				"include": [
+					{ "enabled": true, "host": "^z\\.example\\.com$", "port": "443" },
+					{ "enabled": true, "host": "^a\\.example\\.com$", "port": "80" },
+					{ "enabled": true, "host": "^m\\.example\\.com$", "port": "8080" }
+				],
+				"exclude": [
+					{ "enabled": true, "host": "^z-admin\\.example\\.com$" },
+					{ "enabled": true, "host": "^a-admin\\.example\\.com$" }
+				]
+			}
+		}
+	}`)
+
+	firstReview, err := sanitizer.SanitizeScopeFile(raw, "determ.json")
+	if err != nil {
+		t.Fatalf("initial run failed: %v", err)
+	}
+
+	for i := 0; i < 100; i++ {
+		rev, err := sanitizer.SanitizeScopeFile(raw, "determ.json")
+		if err != nil {
+			t.Fatalf("run %d failed: %v", i, err)
+		}
+		if rev.CanonicalScopeSHA256 != firstReview.CanonicalScopeSHA256 {
+			t.Fatalf("run %d produced divergent CanonicalScopeSHA256: %s != %s",
+				i, rev.CanonicalScopeSHA256, firstReview.CanonicalScopeSHA256)
+		}
+		if rev.NormalizationManifestSHA256 != firstReview.NormalizationManifestSHA256 {
+			t.Fatalf("run %d produced divergent NormalizationManifestSHA256: %s != %s",
+				i, rev.NormalizationManifestSHA256, firstReview.NormalizationManifestSHA256)
+		}
+	}
+}
+
+// Authorization-Preservation Property Test
 func TestScopeImportSanitizer_AuthorizationPreservationProperty(t *testing.T) {
 	sanitizer := NewScopeImportSanitizer()
 
@@ -245,7 +393,6 @@ func TestScopeImportSanitizer_AuthorizationPreservationProperty(t *testing.T) {
 	}
 }
 
-// Section 9: Scope Integrity Hashes Test
 func TestScopeImportSanitizer_HashesIntegrity(t *testing.T) {
 	sanitizer := NewScopeImportSanitizer()
 

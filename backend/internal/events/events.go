@@ -149,3 +149,13 @@ func (b *MemoryEventBus) GetRecentEvents(limit int) []models.Event {
 	copy(result, b.history[start:])
 	return result
 }
+
+// GetEvents retrieves all recorded events from history.
+func (b *MemoryEventBus) GetEvents() []models.Event {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	result := make([]models.Event, len(b.history))
+	copy(result, b.history)
+	return result
+}

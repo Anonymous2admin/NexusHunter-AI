@@ -294,6 +294,19 @@ func (h *Handler) CreateSecurityExpectation(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Phase 8.2R-FINAL.4 Requirement 17: Cross-Entity Ownership Audit
+	if _, err := h.verifyTargetExistsAndActive(r.Context(), req.TargetID); err != nil {
+		Error(w, http.StatusBadRequest, "TARGET_VALIDATION_FAILED", err.Error(), "")
+		return
+	}
+
+	if req.AssetID != "" {
+		if err := h.verifyAssetBelongsToTarget(r.Context(), req.AssetID, req.TargetID); err != nil {
+			Error(w, http.StatusBadRequest, "ASSET_TARGET_MISMATCH", err.Error(), "")
+			return
+		}
+	}
+
 	if req.ID == "" {
 		req.ID = "exp-" + uuid.New().String()[:12]
 	}
@@ -366,10 +379,20 @@ func (h *Handler) EvaluateContradiction(w http.ResponseWriter, r *http.Request) 
 		Error(w, http.StatusBadRequest, "MISSING_TARGET_ID", "target_id is strictly required for contradiction evaluation", "")
 		return
 	}
+	if _, err := h.verifyTargetExistsAndActive(r.Context(), req.TargetID); err != nil {
+		Error(w, http.StatusBadRequest, "TARGET_VALIDATION_FAILED", err.Error(), "")
+		return
+	}
+
 	if strings.TrimSpace(req.AssetID) == "" {
 		Error(w, http.StatusBadRequest, "MISSING_ASSET_ID", "asset_id is strictly required; cannot evaluate without explicit asset attribution", "")
 		return
 	}
+	if err := h.verifyAssetBelongsToTarget(r.Context(), req.AssetID, req.TargetID); err != nil {
+		Error(w, http.StatusBadRequest, "ASSET_TARGET_MISMATCH", err.Error(), "")
+		return
+	}
+
 	if strings.TrimSpace(req.Endpoint) == "" {
 		Error(w, http.StatusBadRequest, "MISSING_ENDPOINT", "endpoint is strictly required; synthetic fallback endpoints are forbidden", "")
 		return
@@ -377,6 +400,13 @@ func (h *Handler) EvaluateContradiction(w http.ResponseWriter, r *http.Request) 
 	if len(req.EvidenceRefs) == 0 {
 		Error(w, http.StatusBadRequest, "MISSING_EVIDENCE_CONTEXT", "at least one evidence reference is strictly required; cannot evaluate without evidence context", "")
 		return
+	}
+
+	for _, ref := range req.EvidenceRefs {
+		if _, err := h.verifyEvidenceBelongsToTarget(r.Context(), ref, req.TargetID, req.AssetID); err != nil {
+			Error(w, http.StatusBadRequest, "EVIDENCE_TARGET_MISMATCH", err.Error(), "")
+			return
+		}
 	}
 
 	con, err := h.evidenceEng.EvaluateContradiction(

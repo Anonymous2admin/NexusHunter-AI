@@ -2,6 +2,9 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -254,14 +257,109 @@ func (m *MemoryStorage) DeleteJob(ctx context.Context, id string) error {
 	return nil
 }
 
+// CreateJobWithAuditEvent creates a job and records an audit event atomically.
+func (m *MemoryStorage) CreateJobWithAuditEvent(ctx context.Context, job *models.ScanJob, event *models.Event) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cp := *job
+	m.jobs[job.ID] = &cp
+
+	if event != nil {
+		m.recordEventLocked(event)
+	}
+	return nil
+}
+
+// UpdateJobWithAuditEvent updates a job and records an audit event atomically.
+func (m *MemoryStorage) UpdateJobWithAuditEvent(ctx context.Context, job *models.ScanJob, event *models.Event) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.jobs[job.ID]; !exists {
+		return ErrNotFound
+	}
+	cp := *job
+	m.jobs[job.ID] = &cp
+
+	if event != nil {
+		m.recordEventLocked(event)
+	}
+	return nil
+}
+
+func sanitizeSecrets(payload map[string]interface{}) map[string]interface{} {
+	if payload == nil {
+		return nil
+	}
+	cleaned := make(map[string]interface{}, len(payload))
+	secretKeywords := []string{"password", "token", "secret", "api_key", "credential", "authorization", "bearer"}
+
+	for k, v := range payload {
+		lowerK := strings.ToLower(k)
+		isSecret := false
+		for _, kw := range secretKeywords {
+			if strings.Contains(lowerK, kw) {
+				isSecret = true
+				break
+			}
+		}
+		if isSecret {
+			cleaned[k] = "[REDACTED_AUDIT_SECRET]"
+		} else {
+			cleaned[k] = v
+		}
+	}
+	return cleaned
+}
+
+func (m *MemoryStorage) recordEventLocked(event *models.Event) {
+	if event == nil {
+		return
+	}
+	// Idempotency: repeated delivery of identical event ID must not duplicate
+	if event.EventID != "" {
+		for _, e := range m.events {
+			if e.EventID == event.EventID {
+				return // Idempotent no-op
+			}
+		}
+	} else {
+		event.EventID = fmt.Sprintf("evt-%d", time.Now().UnixNano())
+	}
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now().UTC()
+	}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now().UTC()
+	}
+
+	cleanPayload := sanitizeSecrets(event.Payload)
+	cp := *event
+	cp.Payload = cleanPayload
+	m.events = append(m.events, &cp)
+}
+
 // Event Operations
 func (m *MemoryStorage) Record(ctx context.Context, event *models.Event) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	cp := *event
-	m.events = append(m.events, &cp)
+	m.recordEventLocked(event)
 	return nil
+}
+
+func (m *MemoryStorage) Get(ctx context.Context, id string) (*models.Event, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, e := range m.events {
+		if e.EventID == id {
+			cp := *e
+			return &cp, nil
+		}
+	}
+	return nil, ErrNotFound
 }
 
 func (m *MemoryStorage) ListRecent(ctx context.Context, limit int) ([]*models.Event, error) {
@@ -277,6 +375,48 @@ func (m *MemoryStorage) ListRecent(ctx context.Context, limit int) ([]*models.Ev
 	for i := 0; i < limit; i++ {
 		cp := *m.events[start+i]
 		result[i] = &cp
+	}
+	return result, nil
+}
+
+func (m *MemoryStorage) ListByTarget(ctx context.Context, targetID string) ([]*models.Event, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []*models.Event
+	for _, e := range m.events {
+		if e.TargetID == targetID {
+			cp := *e
+			result = append(result, &cp)
+		}
+	}
+	return result, nil
+}
+
+func (m *MemoryStorage) ListByJob(ctx context.Context, jobID string) ([]*models.Event, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []*models.Event
+	for _, e := range m.events {
+		if e.JobID == jobID {
+			cp := *e
+			result = append(result, &cp)
+		}
+	}
+	return result, nil
+}
+
+func (m *MemoryStorage) GetByCorrelationID(ctx context.Context, correlationID string) ([]*models.Event, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []*models.Event
+	for _, e := range m.events {
+		if e.CorrelationID == correlationID {
+			cp := *e
+			result = append(result, &cp)
+		}
 	}
 	return result, nil
 }
@@ -2179,12 +2319,15 @@ func (m *MemoryStorage) ListImportReviews(ctx context.Context) ([]*models.ScopeI
 }
 
 func (m *MemoryStorage) ConfirmImportReview(ctx context.Context, id string, selectedRootDomain string, targetID string) error {
-	return m.ConfirmImportReviewProvenance(ctx, id, selectedRootDomain, targetID, "lead-researcher")
+	return errors.New("CONFIRMED_BY_REQUIRED: Explicit operator identity is required for scope confirmation provenance; automatic identity fabrication is forbidden")
 }
 
 func (m *MemoryStorage) ConfirmImportReviewProvenance(ctx context.Context, id string, selectedRootDomain string, targetID string, confirmedBy string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if strings.TrimSpace(confirmedBy) == "" {
+		return errors.New("CONFIRMED_BY_REQUIRED: Explicit operator identity is required for scope confirmation provenance; automatic identity fabrication is forbidden")
+	}
 	rev, exists := m.scopeImports[id]
 	if !exists {
 		return ErrNotFound
@@ -2199,6 +2342,94 @@ func (m *MemoryStorage) ConfirmImportReviewProvenance(ctx context.Context, id st
 	rev.ConfirmedBy = confirmedBy
 	rev.ConfirmedAt = &now
 	return nil
+}
+
+// ConfirmScopeAndCreateTarget executes an authoritative transactional operation:
+// verifies review state and selected root, creates target, and updates scope import atomically.
+// Guaranteed invariant: CONFIRMED scope import <=> existing attributed target.
+func (m *MemoryStorage) ConfirmScopeAndCreateTarget(
+	ctx context.Context,
+	id string,
+	selectedRootDomain string,
+	target *models.Target,
+	confirmedBy string,
+	selectionReason string,
+) (*models.Target, *models.ScopeImportReview, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rev, exists := m.scopeImports[id]
+	if !exists {
+		return nil, nil, ErrNotFound
+	}
+	if rev.Status == "CONFIRMED" {
+		return nil, nil, ErrInvalidState
+	}
+	if rev.Status == "REJECTED" {
+		return nil, nil, errors.New("cannot create target from rejected scope import")
+	}
+
+	if selectedRootDomain == "" || strings.TrimSpace(selectedRootDomain) == "" {
+		return nil, nil, errors.New("explicit selected_root_domain is strictly required; automatic primary-root selection is disabled")
+	}
+	if confirmedBy == "" || strings.TrimSpace(confirmedBy) == "" {
+		return nil, nil, errors.New("CONFIRMED_BY_REQUIRED: Explicit operator identity is required for scope confirmation provenance")
+	}
+
+	// Verify selectedRootDomain is among discovered root candidates
+	validCandidate := false
+	for _, cand := range rev.RootDomains {
+		if cand.NormalizedDomain == selectedRootDomain {
+			validCandidate = true
+			break
+		}
+	}
+	if !validCandidate {
+		return nil, nil, errors.New("selected_root_domain is not among discovered root domain candidates")
+	}
+
+	if target == nil {
+		return nil, nil, errors.New("target definition cannot be nil")
+	}
+
+	// Conflict check: if target ID already exists, abort fail-closed without mutating scope import
+	if _, exists := m.targets[target.ID]; exists {
+		return nil, nil, ErrConflict
+	}
+
+	now := time.Now().UTC()
+
+	// Compute Authorization Snapshot Hash (Requirement 9)
+	snapshotPayload := fmt.Sprintf("%s:%s:%s:%s:%s",
+		rev.CanonicalScopeSHA256, selectedRootDomain, confirmedBy, now.Format(time.RFC3339), target.ID)
+	snapshotSum := sha256.Sum256([]byte(snapshotPayload))
+	snapshotHash := hex.EncodeToString(snapshotSum[:])
+
+	// Populate target fields
+	targetCopy := *target
+	targetCopy.RootDomain = selectedRootDomain
+	targetCopy.ScopeImportID = rev.ID
+	targetCopy.CanonicalScopeHash = snapshotHash
+	targetCopy.ConfirmationTimestamp = &now
+	targetCopy.CreatedAt = now
+	targetCopy.UpdatedAt = now
+
+	// Atomically insert target and mutate review to CONFIRMED
+	m.targets[targetCopy.ID] = &targetCopy
+
+	rev.Status = "CONFIRMED"
+	rev.SelectedRootDomain = selectedRootDomain
+	rev.TargetID = targetCopy.ID
+	rev.ConfirmedBy = confirmedBy
+	rev.ConfirmedAt = &now
+	rev.SelectionReason = selectionReason
+	rev.AuthorizationSnapshotSHA256 = snapshotHash
+	if rev.CanonicalScope != nil {
+		rev.CanonicalScope.ConfirmedPrimaryRootDomain = selectedRootDomain
+	}
+
+	revCopy := *rev
+	return &targetCopy, &revCopy, nil
 }
 
 // ==========================================

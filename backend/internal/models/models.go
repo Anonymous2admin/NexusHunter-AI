@@ -82,12 +82,16 @@ type ScanJob struct {
 
 // Event represents an internal system event for telemetry and real-time distribution.
 type Event struct {
-	EventID   string                 `json:"event_id"`
-	EventType string                 `json:"event_type"`
-	JobID     string                 `json:"job_id,omitempty"`
-	TargetID  string                 `json:"target_id,omitempty"`
-	Timestamp time.Time              `json:"timestamp"`
-	Payload   map[string]interface{} `json:"payload,omitempty"`
+	EventID       string                 `json:"event_id"`
+	EventType     string                 `json:"event_type"`
+	JobID         string                 `json:"job_id,omitempty"`
+	TargetID      string                 `json:"target_id,omitempty"`
+	Timestamp     time.Time              `json:"timestamp"`
+	CorrelationID string                 `json:"correlation_id,omitempty"`
+	PreviousState string                 `json:"previous_state,omitempty"`
+	NewState      string                 `json:"new_state,omitempty"`
+	Payload       map[string]interface{} `json:"payload,omitempty"`
+	CreatedAt     time.Time              `json:"created_at"`
 }
 
 // Standard Event Type constants

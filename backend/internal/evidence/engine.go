@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -88,6 +89,7 @@ func (e *Engine) RecordEvidence(ctx context.Context, raw *models.Evidence) (*mod
 		return nil, fmt.Errorf("failed to canonicalize evidence: %w", err)
 	}
 	sanitized.IntegrityHash = hash
+	sanitized.SHA256 = hash
 	e.logger.Info("evidence hashed",
 		slog.String("evidence_id", sanitized.ID),
 		slog.String("sha256", hash),

@@ -21,6 +21,8 @@ func NewRouter(h *Handler, logger *slog.Logger) http.Handler {
 	mux.HandleFunc("POST /api/targets", h.CreateTarget)
 	mux.HandleFunc("GET /api/targets", h.ListTargets)
 	mux.HandleFunc("GET /api/targets/{id}", h.GetTarget)
+	mux.HandleFunc("PATCH /api/targets/{id}", h.UpdateTarget)
+	mux.HandleFunc("PUT /api/targets/{id}", h.UpdateTarget)
 	mux.HandleFunc("DELETE /api/targets/{id}", h.DeleteTarget)
 	mux.HandleFunc("GET /api/targets/{id}/assets", h.ListTargetAssets)
 	mux.HandleFunc("GET /api/targets/{id}/urls", h.ListTargetURLs)

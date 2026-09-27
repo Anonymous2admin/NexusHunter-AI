@@ -25,14 +25,21 @@ type TargetChecker interface {
 	GetByID(ctx context.Context, id string) (*models.Target, error)
 }
 
+// AuditEventRecorder specifies durable event persistence for audit events.
+type AuditEventRecorder interface {
+	Record(ctx context.Context, event *models.Event) error
+}
+
 // JobRepository specifies the durable storage interface for scan jobs.
 // Guarantees that across process restarts, all QUEUED/RUNNING/COMPLETED/FAILED/CANCELLED
 // job states remain durable and fully recoverable.
 type JobRepository interface {
 	CreateJob(ctx context.Context, job *models.ScanJob) error
+	CreateJobWithAuditEvent(ctx context.Context, job *models.ScanJob, event *models.Event) error
 	GetJobByID(ctx context.Context, id string) (*models.ScanJob, error)
 	ListJobs(ctx context.Context, targetID string) ([]*models.ScanJob, error)
 	UpdateJob(ctx context.Context, job *models.ScanJob) error
+	UpdateJobWithAuditEvent(ctx context.Context, job *models.ScanJob, event *models.Event) error
 	DeleteJob(ctx context.Context, id string) error
 }
 
@@ -50,6 +57,14 @@ func NewMemoryJobRepository() *MemoryJobRepository {
 }
 
 func (m *MemoryJobRepository) CreateJob(ctx context.Context, job *models.ScanJob) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := *job
+	m.jobs[job.ID] = &cp
+	return nil
+}
+
+func (m *MemoryJobRepository) CreateJobWithAuditEvent(ctx context.Context, job *models.ScanJob, event *models.Event) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cp := *job
@@ -92,6 +107,17 @@ func (m *MemoryJobRepository) UpdateJob(ctx context.Context, job *models.ScanJob
 	return nil
 }
 
+func (m *MemoryJobRepository) UpdateJobWithAuditEvent(ctx context.Context, job *models.ScanJob, event *models.Event) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.jobs[job.ID]; !exists {
+		return ErrJobNotFound
+	}
+	cp := *job
+	m.jobs[job.ID] = &cp
+	return nil
+}
+
 func (m *MemoryJobRepository) DeleteJob(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -111,6 +137,7 @@ type JobService interface {
 	CompleteJob(ctx context.Context, id string) (*models.ScanJob, error)
 	FailJob(ctx context.Context, id string, failureReason string) (*models.ScanJob, error)
 	CancelJob(ctx context.Context, id string) (*models.ScanJob, error)
+	HandleTargetDeactivated(ctx context.Context, targetID string) error
 }
 
 // Manager implements JobService backed by a durable JobRepository and event publishing.
@@ -120,6 +147,7 @@ type Manager struct {
 	mu            sync.RWMutex
 	repo          JobRepository
 	eventBus      events.EventBus
+	eventRepo     AuditEventRecorder
 	targetChecker TargetChecker
 }
 
@@ -144,6 +172,13 @@ func (m *Manager) SetJobRepository(repo JobRepository) {
 	m.repo = repo
 }
 
+// SetEventRepository registers a durable event repository for audit event persistence.
+func (m *Manager) SetEventRepository(eventRepo AuditEventRecorder) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.eventRepo = eventRepo
+}
+
 // SetTargetChecker registers a TargetChecker dependency for target activity verification.
 func (m *Manager) SetTargetChecker(checker TargetChecker) {
 	m.mu.Lock()
@@ -162,6 +197,56 @@ func (m *Manager) validateTargetActive(ctx context.Context, targetID string) err
 	}
 	if target.Status != models.TargetStatusActive {
 		return ErrTargetNotActive
+	}
+	return nil
+}
+
+// persistJobCreate executes atomic creation of job state and audit event.
+func (m *Manager) persistJobCreate(ctx context.Context, job *models.ScanJob, event *models.Event) error {
+	if atomicRepo, ok := m.repo.(interface {
+		CreateJobWithAuditEvent(ctx context.Context, job *models.ScanJob, event *models.Event) error
+	}); ok {
+		if err := atomicRepo.CreateJobWithAuditEvent(ctx, job, event); err != nil {
+			return fmt.Errorf("failed to persist job and audit event atomically: %w", err)
+		}
+	} else {
+		if err := m.repo.CreateJob(ctx, job); err != nil {
+			return fmt.Errorf("failed to persist new scan job: %w", err)
+		}
+		if m.eventRepo != nil && event != nil {
+			if err := m.eventRepo.Record(ctx, event); err != nil {
+				return fmt.Errorf("failed to persist audit event: %w", err)
+			}
+		}
+	}
+
+	if m.eventBus != nil && event != nil {
+		_ = m.eventBus.Publish(ctx, *event)
+	}
+	return nil
+}
+
+// persistJobUpdate executes atomic update of job state and audit event.
+func (m *Manager) persistJobUpdate(ctx context.Context, job *models.ScanJob, event *models.Event) error {
+	if atomicRepo, ok := m.repo.(interface {
+		UpdateJobWithAuditEvent(ctx context.Context, job *models.ScanJob, event *models.Event) error
+	}); ok {
+		if err := atomicRepo.UpdateJobWithAuditEvent(ctx, job, event); err != nil {
+			return fmt.Errorf("failed to persist job transition and audit event atomically: %w", err)
+		}
+	} else {
+		if err := m.repo.UpdateJob(ctx, job); err != nil {
+			return fmt.Errorf("failed to persist job state transition: %w", err)
+		}
+		if m.eventRepo != nil && event != nil {
+			if err := m.eventRepo.Record(ctx, event); err != nil {
+				return fmt.Errorf("failed to persist audit event: %w", err)
+			}
+		}
+	}
+
+	if m.eventBus != nil && event != nil {
+		_ = m.eventBus.Publish(ctx, *event)
 	}
 	return nil
 }
@@ -199,30 +284,30 @@ func (m *Manager) CreateJob(ctx context.Context, targetID string, jobType string
 		Metadata:  metadata,
 	}
 
-	if err := m.repo.CreateJob(ctx, job); err != nil {
-		return nil, fmt.Errorf("failed to persist new scan job: %w", err)
+	auditEvent := &models.Event{
+		EventID:       events.GenerateID("evt"),
+		EventType:     models.EventJobCreated,
+		JobID:         job.ID,
+		TargetID:      job.TargetID,
+		Timestamp:     now,
+		CorrelationID: corrID,
+		PreviousState: "",
+		NewState:      string(models.JobStatusQueued),
+		CreatedAt:     now,
+		Payload: map[string]interface{}{
+			"job_id":         job.ID,
+			"target_id":      job.TargetID,
+			"timestamp":      now.Format(time.RFC3339),
+			"correlation_id": corrID,
+			"previous_state": "",
+			"new_state":      string(models.JobStatusQueued),
+			"job_type":       job.Type,
+			"metadata":       metadata,
+		},
 	}
 
-	if m.eventBus != nil {
-		if err := m.eventBus.Publish(ctx, models.Event{
-			EventID:   events.GenerateID("evt"),
-			EventType: models.EventJobCreated,
-			JobID:     job.ID,
-			TargetID:  job.TargetID,
-			Timestamp: now,
-			Payload: map[string]interface{}{
-				"job_id":         job.ID,
-				"target_id":      job.TargetID,
-				"timestamp":      now.Format(time.RFC3339),
-				"correlation_id": corrID,
-				"previous_state": "",
-				"new_state":      string(models.JobStatusQueued),
-				"job_type":       job.Type,
-				"metadata":       metadata,
-			},
-		}); err != nil {
-			return nil, fmt.Errorf("failed to publish job created audit event: %w", err)
-		}
+	if err := m.persistJobCreate(ctx, job, auditEvent); err != nil {
+		return nil, err
 	}
 
 	copied := *job
@@ -276,29 +361,29 @@ func (m *Manager) StartJob(ctx context.Context, id string) (*models.ScanJob, err
 	job.StartedAt = &now
 	corrID := events.GenerateID("corr")
 
-	if err := m.repo.UpdateJob(ctx, job); err != nil {
-		return nil, fmt.Errorf("failed to persist job state transition: %w", err)
+	auditEvent := &models.Event{
+		EventID:       events.GenerateID("evt"),
+		EventType:     models.EventJobStarted,
+		JobID:         job.ID,
+		TargetID:      job.TargetID,
+		Timestamp:     now,
+		CorrelationID: corrID,
+		PreviousState: string(prevStatus),
+		NewState:      string(models.JobStatusRunning),
+		CreatedAt:     now,
+		Payload: map[string]interface{}{
+			"job_id":         job.ID,
+			"target_id":      job.TargetID,
+			"timestamp":      now.Format(time.RFC3339),
+			"correlation_id": corrID,
+			"previous_state": string(prevStatus),
+			"new_state":      string(models.JobStatusRunning),
+			"job_type":       job.Type,
+		},
 	}
 
-	if m.eventBus != nil {
-		if err := m.eventBus.Publish(ctx, models.Event{
-			EventID:   events.GenerateID("evt"),
-			EventType: models.EventJobStarted,
-			JobID:     job.ID,
-			TargetID:  job.TargetID,
-			Timestamp: now,
-			Payload: map[string]interface{}{
-				"job_id":         job.ID,
-				"target_id":      job.TargetID,
-				"timestamp":      now.Format(time.RFC3339),
-				"correlation_id": corrID,
-				"previous_state": string(prevStatus),
-				"new_state":      string(models.JobStatusRunning),
-				"job_type":       job.Type,
-			},
-		}); err != nil {
-			return nil, fmt.Errorf("failed to publish job started audit event: %w", err)
-		}
+	if err := m.persistJobUpdate(ctx, job, auditEvent); err != nil {
+		return nil, err
 	}
 
 	copied := *job
@@ -336,29 +421,29 @@ func (m *Manager) CompleteJob(ctx context.Context, id string) (*models.ScanJob, 
 	job.CompletedAt = &now
 	corrID := events.GenerateID("corr")
 
-	if err := m.repo.UpdateJob(ctx, job); err != nil {
-		return nil, fmt.Errorf("failed to persist job completion: %w", err)
+	auditEvent := &models.Event{
+		EventID:       events.GenerateID("evt"),
+		EventType:     models.EventJobCompleted,
+		JobID:         job.ID,
+		TargetID:      job.TargetID,
+		Timestamp:     now,
+		CorrelationID: corrID,
+		PreviousState: string(prevStatus),
+		NewState:      string(models.JobStatusCompleted),
+		CreatedAt:     now,
+		Payload: map[string]interface{}{
+			"job_id":         job.ID,
+			"target_id":      job.TargetID,
+			"timestamp":      now.Format(time.RFC3339),
+			"correlation_id": corrID,
+			"previous_state": string(prevStatus),
+			"new_state":      string(models.JobStatusCompleted),
+			"job_type":       job.Type,
+		},
 	}
 
-	if m.eventBus != nil {
-		if err := m.eventBus.Publish(ctx, models.Event{
-			EventID:   events.GenerateID("evt"),
-			EventType: models.EventJobCompleted,
-			JobID:     job.ID,
-			TargetID:  job.TargetID,
-			Timestamp: now,
-			Payload: map[string]interface{}{
-				"job_id":         job.ID,
-				"target_id":      job.TargetID,
-				"timestamp":      now.Format(time.RFC3339),
-				"correlation_id": corrID,
-				"previous_state": string(prevStatus),
-				"new_state":      string(models.JobStatusCompleted),
-				"job_type":       job.Type,
-			},
-		}); err != nil {
-			return nil, fmt.Errorf("failed to publish job completed audit event: %w", err)
-		}
+	if err := m.persistJobUpdate(ctx, job, auditEvent); err != nil {
+		return nil, err
 	}
 
 	copied := *job
@@ -398,30 +483,30 @@ func (m *Manager) FailJob(ctx context.Context, id string, failureReason string) 
 	job.Error = failureReason
 	corrID := events.GenerateID("corr")
 
-	if err := m.repo.UpdateJob(ctx, job); err != nil {
-		return nil, fmt.Errorf("failed to persist job failure: %w", err)
+	auditEvent := &models.Event{
+		EventID:       events.GenerateID("evt"),
+		EventType:     models.EventJobFailed,
+		JobID:         job.ID,
+		TargetID:      job.TargetID,
+		Timestamp:     now,
+		CorrelationID: corrID,
+		PreviousState: string(prevStatus),
+		NewState:      string(models.JobStatusFailed),
+		CreatedAt:     now,
+		Payload: map[string]interface{}{
+			"job_id":         job.ID,
+			"target_id":      job.TargetID,
+			"timestamp":      now.Format(time.RFC3339),
+			"correlation_id": corrID,
+			"previous_state": string(prevStatus),
+			"new_state":      string(models.JobStatusFailed),
+			"job_type":       job.Type,
+			"error":          failureReason,
+		},
 	}
 
-	if m.eventBus != nil {
-		if err := m.eventBus.Publish(ctx, models.Event{
-			EventID:   events.GenerateID("evt"),
-			EventType: models.EventJobFailed,
-			JobID:     job.ID,
-			TargetID:  job.TargetID,
-			Timestamp: now,
-			Payload: map[string]interface{}{
-				"job_id":         job.ID,
-				"target_id":      job.TargetID,
-				"timestamp":      now.Format(time.RFC3339),
-				"correlation_id": corrID,
-				"previous_state": string(prevStatus),
-				"new_state":      string(models.JobStatusFailed),
-				"job_type":       job.Type,
-				"error":          failureReason,
-			},
-		}); err != nil {
-			return nil, fmt.Errorf("failed to publish job failed audit event: %w", err)
-		}
+	if err := m.persistJobUpdate(ctx, job, auditEvent); err != nil {
+		return nil, err
 	}
 
 	copied := *job
@@ -460,31 +545,74 @@ func (m *Manager) CancelJob(ctx context.Context, id string) (*models.ScanJob, er
 	job.CompletedAt = &now
 	corrID := events.GenerateID("corr")
 
-	if err := m.repo.UpdateJob(ctx, job); err != nil {
-		return nil, fmt.Errorf("failed to persist job cancellation: %w", err)
+	auditEvent := &models.Event{
+		EventID:       events.GenerateID("evt"),
+		EventType:     models.EventJobCancelled,
+		JobID:         job.ID,
+		TargetID:      job.TargetID,
+		Timestamp:     now,
+		CorrelationID: corrID,
+		PreviousState: string(prevStatus),
+		NewState:      string(models.JobStatusCancelled),
+		CreatedAt:     now,
+		Payload: map[string]interface{}{
+			"job_id":         job.ID,
+			"target_id":      job.TargetID,
+			"timestamp":      now.Format(time.RFC3339),
+			"correlation_id": corrID,
+			"previous_state": string(prevStatus),
+			"new_state":      string(models.JobStatusCancelled),
+			"job_type":       job.Type,
+		},
 	}
 
-	if m.eventBus != nil {
-		if err := m.eventBus.Publish(ctx, models.Event{
-			EventID:   events.GenerateID("evt"),
-			EventType: models.EventJobCancelled,
-			JobID:     job.ID,
-			TargetID:  job.TargetID,
-			Timestamp: now,
-			Payload: map[string]interface{}{
-				"job_id":         job.ID,
-				"target_id":      job.TargetID,
-				"timestamp":      now.Format(time.RFC3339),
-				"correlation_id": corrID,
-				"previous_state": string(prevStatus),
-				"new_state":      string(models.JobStatusCancelled),
-				"job_type":       job.Type,
-			},
-		}); err != nil {
-			return nil, fmt.Errorf("failed to publish job cancelled audit event: %w", err)
-		}
+	if err := m.persistJobUpdate(ctx, job, auditEvent); err != nil {
+		return nil, err
 	}
 
 	copied := *job
 	return &copied, nil
+}
+
+// HandleTargetDeactivated cancels all active (QUEUED or RUNNING) jobs for a target that was deactivated or deleted.
+func (m *Manager) HandleTargetDeactivated(ctx context.Context, targetID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	jobList, err := m.repo.ListJobs(ctx, targetID)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	for _, job := range jobList {
+		if job.Status == models.JobStatusQueued || job.Status == models.JobStatusRunning {
+			prevStatus := job.Status
+			job.Status = models.JobStatusCancelled
+			job.CompletedAt = &now
+			job.Error = "target deactivated or deleted: lifecycle violation fail-closed"
+			corrID := events.GenerateID("corr")
+			auditEvent := &models.Event{
+				EventID:       events.GenerateID("evt"),
+				EventType:     models.EventJobCancelled,
+				JobID:         job.ID,
+				TargetID:      job.TargetID,
+				Timestamp:     now,
+				CorrelationID: corrID,
+				PreviousState: string(prevStatus),
+				NewState:      string(models.JobStatusCancelled),
+				CreatedAt:     now,
+				Payload: map[string]interface{}{
+					"job_id":         job.ID,
+					"target_id":      job.TargetID,
+					"timestamp":      now.Format(time.RFC3339),
+					"correlation_id": corrID,
+					"previous_state": string(prevStatus),
+					"new_state":      string(models.JobStatusCancelled),
+					"error":          "target deactivated or deleted: lifecycle violation fail-closed",
+				},
+			}
+			_ = m.persistJobUpdate(ctx, job, auditEvent)
+		}
+	}
+	return nil
 }

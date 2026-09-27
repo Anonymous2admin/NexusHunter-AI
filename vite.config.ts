@@ -3945,11 +3945,44 @@ function nexusApiPlugin(): Plugin {
               })
             );
           }
+          const confirmedBy = (body.confirmed_by || req.headers['x-operator-id'] || req.headers['x-researcher-id'] || '').toString().trim();
+          if (!confirmedBy) {
+            res.statusCode = 400;
+            return res.end(
+              JSON.stringify({
+                error: {
+                  code: 'CONFIRMED_BY_REQUIRED',
+                  message: 'Explicit operator identity is required for scope confirmation provenance; automatic identity fabrication is forbidden',
+                },
+              })
+            );
+          }
+          const selectedRoot = body.selected_root_domain.trim();
+          const targetId = `tgt-${Date.now().toString(36)}`;
+          const nowIso = new Date().toISOString();
+          const newTarget = {
+            id: targetId,
+            name: body.target_name || selectedRoot,
+            root_domain: selectedRoot,
+            allowed_domains: [selectedRoot, `*.${selectedRoot}`],
+            allowed_url_patterns: ['/*'],
+            excluded_patterns: [],
+            status: 'ACTIVE',
+            scope_import_id: review.id,
+            canonical_scope_hash: review.canonical_scope_sha256 || 'hash-preview',
+            confirmation_timestamp: nowIso,
+            created_at: nowIso,
+            updated_at: nowIso,
+          };
+          targetsStore.unshift(newTarget);
+
           review.status = 'CONFIRMED';
-          review.selected_root_domain = body.selected_root_domain.trim();
-          review.confirmed_by = body.confirmed_by || 'SECURITY_ANALYST';
-          review.confirmed_at = new Date().toISOString();
+          review.selected_root_domain = selectedRoot;
+          review.target_id = targetId;
+          review.confirmed_by = confirmedBy;
+          review.confirmed_at = nowIso;
           review.source_import_id = review.id;
+          review.authorization_snapshot_sha256 = `snap-${review.id}-${Date.now()}`;
           res.statusCode = 200;
           return res.end(JSON.stringify(review));
         }

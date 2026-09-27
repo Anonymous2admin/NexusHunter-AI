@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/models"
 )
@@ -168,7 +169,7 @@ func (p *PostgresStorage) Update(ctx context.Context, target *models.Target) err
 func (p *PostgresStorage) CreateJob(ctx context.Context, job *models.ScanJob) error {
 	metaJSON, err := json.Marshal(job.Metadata)
 	if err != nil {
-		metaJSON = []byte("{}")
+		return fmt.Errorf("failed to marshal job metadata: %w", err)
 	}
 
 	query := `
@@ -187,6 +188,47 @@ func (p *PostgresStorage) CreateJob(ctx context.Context, job *models.ScanJob) er
 		string(metaJSON),
 	)
 	return err
+}
+
+// CreateJobWithAuditEvent creates a job and records an audit event atomically in a transaction.
+func (p *PostgresStorage) CreateJobWithAuditEvent(ctx context.Context, job *models.ScanJob, event *models.Event) error {
+	metaJSON, err := json.Marshal(job.Metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal job metadata: %w", err)
+	}
+
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	query := `
+		INSERT INTO scan_jobs (id, target_id, type, status, created_at, started_at, completed_at, error, metadata)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`
+	_, err = tx.ExecContext(ctx, query,
+		job.ID,
+		job.TargetID,
+		job.Type,
+		string(job.Status),
+		job.CreatedAt,
+		job.StartedAt,
+		job.CompletedAt,
+		job.Error,
+		string(metaJSON),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert scan job: %w", err)
+	}
+
+	if event != nil {
+		if err := p.recordEventTx(ctx, tx, event); err != nil {
+			return fmt.Errorf("failed to record audit event in transaction: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 // GetJobByID retrieves a scan job by its ID from PostgreSQL.
@@ -210,7 +252,9 @@ func (p *PostgresStorage) GetJobByID(ctx context.Context, id string) (*models.Sc
 	}
 	j.Status = models.JobStatus(statusStr)
 	if len(metaJSON) > 0 {
-		_ = json.Unmarshal(metaJSON, &j.Metadata)
+		if err := json.Unmarshal(metaJSON, &j.Metadata); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal job metadata: %w", err)
+		}
 	}
 	return &j, nil
 }
@@ -242,7 +286,9 @@ func (p *PostgresStorage) ListJobs(ctx context.Context, targetID string) ([]*mod
 		}
 		j.Status = models.JobStatus(statusStr)
 		if len(metaJSON) > 0 {
-			_ = json.Unmarshal(metaJSON, &j.Metadata)
+			if err := json.Unmarshal(metaJSON, &j.Metadata); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal job metadata: %w", err)
+			}
 		}
 		result = append(result, &j)
 	}
@@ -253,7 +299,7 @@ func (p *PostgresStorage) ListJobs(ctx context.Context, targetID string) ([]*mod
 func (p *PostgresStorage) UpdateJob(ctx context.Context, job *models.ScanJob) error {
 	metaJSON, err := json.Marshal(job.Metadata)
 	if err != nil {
-		metaJSON = []byte("{}")
+		return fmt.Errorf("failed to marshal job metadata: %w", err)
 	}
 
 	query := `
@@ -282,6 +328,52 @@ func (p *PostgresStorage) UpdateJob(ctx context.Context, job *models.ScanJob) er
 	return nil
 }
 
+// UpdateJobWithAuditEvent updates a job state and records an audit event atomically in a transaction.
+func (p *PostgresStorage) UpdateJobWithAuditEvent(ctx context.Context, job *models.ScanJob, event *models.Event) error {
+	metaJSON, err := json.Marshal(job.Metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal job metadata: %w", err)
+	}
+
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	query := `
+		UPDATE scan_jobs
+		SET status = $2, started_at = $3, completed_at = $4, error = $5, metadata = $6
+		WHERE id = $1
+	`
+	res, err := tx.ExecContext(ctx, query,
+		job.ID,
+		string(job.Status),
+		job.StartedAt,
+		job.CompletedAt,
+		job.Error,
+		string(metaJSON),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update scan job: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+
+	if event != nil {
+		if err := p.recordEventTx(ctx, tx, event); err != nil {
+			return fmt.Errorf("failed to record audit event in transaction: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}
+
 // DeleteJob removes a scan job by its ID from PostgreSQL.
 func (p *PostgresStorage) DeleteJob(ctx context.Context, id string) error {
 	query := `DELETE FROM scan_jobs WHERE id = $1`
@@ -297,6 +389,282 @@ func (p *PostgresStorage) DeleteJob(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// ==========================================
+// Durable Audit & Event Repository (PostgreSQL)
+// ==========================================
+
+func (p *PostgresStorage) recordEventTx(ctx context.Context, tx *sql.Tx, event *models.Event) error {
+	if event == nil {
+		return nil
+	}
+	if event.EventID == "" {
+		event.EventID = fmt.Sprintf("evt-%d", time.Now().UnixNano())
+	}
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now().UTC()
+	}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now().UTC()
+	}
+
+	cleanPayload := sanitizeSecrets(event.Payload)
+	payloadJSON, err := json.Marshal(cleanPayload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal event payload: %w", err)
+	}
+
+	query := `
+		INSERT INTO events (
+			event_id, event_type, job_id, target_id, timestamp,
+			correlation_id, previous_state, new_state, payload, created_at
+		)
+		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (event_id) DO NOTHING
+	`
+	_, err = tx.ExecContext(ctx, query,
+		event.EventID,
+		event.EventType,
+		event.JobID,
+		event.TargetID,
+		event.Timestamp,
+		event.CorrelationID,
+		event.PreviousState,
+		event.NewState,
+		string(payloadJSON),
+		event.CreatedAt,
+	)
+	return err
+}
+
+// Record persists an audit event idempotently into PostgreSQL.
+func (p *PostgresStorage) Record(ctx context.Context, event *models.Event) error {
+	if event == nil {
+		return nil
+	}
+	if event.EventID == "" {
+		event.EventID = fmt.Sprintf("evt-%d", time.Now().UnixNano())
+	}
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now().UTC()
+	}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now().UTC()
+	}
+
+	cleanPayload := sanitizeSecrets(event.Payload)
+	payloadJSON, err := json.Marshal(cleanPayload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal event payload: %w", err)
+	}
+
+	query := `
+		INSERT INTO events (
+			event_id, event_type, job_id, target_id, timestamp,
+			correlation_id, previous_state, new_state, payload, created_at
+		)
+		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (event_id) DO NOTHING
+	`
+	_, err = p.db.ExecContext(ctx, query,
+		event.EventID,
+		event.EventType,
+		event.JobID,
+		event.TargetID,
+		event.Timestamp,
+		event.CorrelationID,
+		event.PreviousState,
+		event.NewState,
+		string(payloadJSON),
+		event.CreatedAt,
+	)
+	return err
+}
+
+// Get retrieves an audit event by its ID.
+func (p *PostgresStorage) Get(ctx context.Context, id string) (*models.Event, error) {
+	query := `
+		SELECT event_id, event_type, COALESCE(job_id, ''), COALESCE(target_id, ''),
+		       timestamp, COALESCE(correlation_id, ''), COALESCE(previous_state, ''),
+		       COALESCE(new_state, ''), payload, COALESCE(created_at, timestamp)
+		FROM events WHERE event_id = $1
+	`
+	row := p.db.QueryRowContext(ctx, query, id)
+	var e models.Event
+	var payloadBytes []byte
+	err := row.Scan(
+		&e.EventID, &e.EventType, &e.JobID, &e.TargetID,
+		&e.Timestamp, &e.CorrelationID, &e.PreviousState,
+		&e.NewState, &payloadBytes, &e.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if len(payloadBytes) > 0 {
+		if err := json.Unmarshal(payloadBytes, &e.Payload); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal event payload: %w", err)
+		}
+	}
+	return &e, nil
+}
+
+// ListRecent retrieves the most recent events up to limit.
+func (p *PostgresStorage) ListRecent(ctx context.Context, limit int) ([]*models.Event, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	query := `
+		SELECT event_id, event_type, COALESCE(job_id, ''), COALESCE(target_id, ''),
+		       timestamp, COALESCE(correlation_id, ''), COALESCE(previous_state, ''),
+		       COALESCE(new_state, ''), payload, COALESCE(created_at, timestamp)
+		FROM events
+		ORDER BY timestamp DESC
+		LIMIT $1
+	`
+	rows, err := p.db.QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []*models.Event
+	for rows.Next() {
+		var e models.Event
+		var payloadBytes []byte
+		err := rows.Scan(
+			&e.EventID, &e.EventType, &e.JobID, &e.TargetID,
+			&e.Timestamp, &e.CorrelationID, &e.PreviousState,
+			&e.NewState, &payloadBytes, &e.CreatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if len(payloadBytes) > 0 {
+			if err := json.Unmarshal(payloadBytes, &e.Payload); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal event payload: %w", err)
+			}
+		}
+		events = append(events, &e)
+	}
+	return events, nil
+}
+
+// ListByTarget retrieves events for a given target ID.
+func (p *PostgresStorage) ListByTarget(ctx context.Context, targetID string) ([]*models.Event, error) {
+	query := `
+		SELECT event_id, event_type, COALESCE(job_id, ''), COALESCE(target_id, ''),
+		       timestamp, COALESCE(correlation_id, ''), COALESCE(previous_state, ''),
+		       COALESCE(new_state, ''), payload, COALESCE(created_at, timestamp)
+		FROM events
+		WHERE target_id = $1
+		ORDER BY timestamp DESC
+	`
+	rows, err := p.db.QueryContext(ctx, query, targetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []*models.Event
+	for rows.Next() {
+		var e models.Event
+		var payloadBytes []byte
+		err := rows.Scan(
+			&e.EventID, &e.EventType, &e.JobID, &e.TargetID,
+			&e.Timestamp, &e.CorrelationID, &e.PreviousState,
+			&e.NewState, &payloadBytes, &e.CreatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if len(payloadBytes) > 0 {
+			if err := json.Unmarshal(payloadBytes, &e.Payload); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal event payload: %w", err)
+			}
+		}
+		events = append(events, &e)
+	}
+	return events, nil
+}
+
+// ListByJob retrieves events for a given job ID.
+func (p *PostgresStorage) ListByJob(ctx context.Context, jobID string) ([]*models.Event, error) {
+	query := `
+		SELECT event_id, event_type, COALESCE(job_id, ''), COALESCE(target_id, ''),
+		       timestamp, COALESCE(correlation_id, ''), COALESCE(previous_state, ''),
+		       COALESCE(new_state, ''), payload, COALESCE(created_at, timestamp)
+		FROM events
+		WHERE job_id = $1
+		ORDER BY timestamp DESC
+	`
+	rows, err := p.db.QueryContext(ctx, query, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []*models.Event
+	for rows.Next() {
+		var e models.Event
+		var payloadBytes []byte
+		err := rows.Scan(
+			&e.EventID, &e.EventType, &e.JobID, &e.TargetID,
+			&e.Timestamp, &e.CorrelationID, &e.PreviousState,
+			&e.NewState, &payloadBytes, &e.CreatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if len(payloadBytes) > 0 {
+			if err := json.Unmarshal(payloadBytes, &e.Payload); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal event payload: %w", err)
+			}
+		}
+		events = append(events, &e)
+	}
+	return events, nil
+}
+
+// GetByCorrelationID retrieves events matching a correlation ID.
+func (p *PostgresStorage) GetByCorrelationID(ctx context.Context, correlationID string) ([]*models.Event, error) {
+	query := `
+		SELECT event_id, event_type, COALESCE(job_id, ''), COALESCE(target_id, ''),
+		       timestamp, COALESCE(correlation_id, ''), COALESCE(previous_state, ''),
+		       COALESCE(new_state, ''), payload, COALESCE(created_at, timestamp)
+		FROM events
+		WHERE correlation_id = $1
+		ORDER BY timestamp ASC
+	`
+	rows, err := p.db.QueryContext(ctx, query, correlationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []*models.Event
+	for rows.Next() {
+		var e models.Event
+		var payloadBytes []byte
+		err := rows.Scan(
+			&e.EventID, &e.EventType, &e.JobID, &e.TargetID,
+			&e.Timestamp, &e.CorrelationID, &e.PreviousState,
+			&e.NewState, &payloadBytes, &e.CreatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if len(payloadBytes) > 0 {
+			if err := json.Unmarshal(payloadBytes, &e.Payload); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal event payload: %w", err)
+			}
+		}
+		events = append(events, &e)
+	}
+	return events, nil
 }
 
 func splitNonEmpty(s string) []string {

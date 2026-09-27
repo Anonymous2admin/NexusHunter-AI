@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -260,6 +262,72 @@ func (h *Handler) GetTarget(w http.ResponseWriter, r *http.Request) {
 	Success(w, http.StatusOK, target)
 }
 
+// UpdateTarget handles PATCH /api/targets/{id} and PUT /api/targets/{id}
+func (h *Handler) UpdateTarget(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if len(parts) >= 3 {
+			id = parts[2]
+		}
+	}
+
+	target, err := h.storage.GetByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			Error(w, http.StatusNotFound, "TARGET_NOT_FOUND", "target with specified id does not exist", id)
+			return
+		}
+		Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to retrieve target", err.Error())
+		return
+	}
+
+	var req struct {
+		Name               *string              `json:"name"`
+		Status             *models.TargetStatus `json:"status"`
+		AllowedDomains     []string             `json:"allowed_domains"`
+		AllowedURLPatterns []string             `json:"allowed_url_patterns"`
+		ExcludedPatterns   []string             `json:"excluded_patterns"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		Error(w, http.StatusBadRequest, "INVALID_PAYLOAD", "failed to parse JSON body", err.Error())
+		return
+	}
+
+	if req.Name != nil && strings.TrimSpace(*req.Name) != "" {
+		target.Name = strings.TrimSpace(*req.Name)
+	}
+	if req.AllowedDomains != nil {
+		target.AllowedDomains = cleanStringSlice(req.AllowedDomains)
+	}
+	if req.AllowedURLPatterns != nil {
+		target.AllowedURLPatterns = cleanStringSlice(req.AllowedURLPatterns)
+	}
+	if req.ExcludedPatterns != nil {
+		target.ExcludedPatterns = cleanStringSlice(req.ExcludedPatterns)
+	}
+
+	oldStatus := target.Status
+	if req.Status != nil {
+		target.Status = *req.Status
+	}
+	target.UpdatedAt = time.Now().UTC()
+
+	if err := h.storage.Update(r.Context(), target); err != nil {
+		Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to update target", err.Error())
+		return
+	}
+
+	// Requirement 22: If target becomes inactive/deleted: Reject queued jobs, fail or cancel active jobs
+	if target.Status != models.TargetStatusActive && oldStatus == models.TargetStatusActive {
+		if h.jobSvc != nil {
+			_ = h.jobSvc.HandleTargetDeactivated(r.Context(), id)
+		}
+	}
+
+	Success(w, http.StatusOK, target)
+}
+
 // DeleteTarget handles DELETE /api/targets/{id}
 func (h *Handler) DeleteTarget(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -268,6 +336,11 @@ func (h *Handler) DeleteTarget(w http.ResponseWriter, r *http.Request) {
 		if len(parts) >= 3 {
 			id = parts[2]
 		}
+	}
+
+	// Requirement 22: Cancel all active jobs on target deletion
+	if h.jobSvc != nil {
+		_ = h.jobSvc.HandleTargetDeactivated(r.Context(), id)
 	}
 
 	if err := h.storage.Delete(r.Context(), id); err != nil {
@@ -283,6 +356,115 @@ func (h *Handler) DeleteTarget(w http.ResponseWriter, r *http.Request) {
 		"message": "target deleted successfully",
 		"id":      id,
 	})
+}
+
+// Cross-Entity Ownership and Attribution Verification Helpers (Requirements 17-21)
+func (h *Handler) verifyTargetExistsAndActive(ctx context.Context, targetID string) (*models.Target, error) {
+	if strings.TrimSpace(targetID) == "" {
+		return nil, errors.New("target_id is required")
+	}
+	if h.storage == nil {
+		return nil, errors.New("target store unavailable")
+	}
+	t, err := h.storage.GetByID(ctx, targetID)
+	if err != nil || t == nil {
+		return nil, fmt.Errorf("target '%s' not found", targetID)
+	}
+	if t.Status != models.TargetStatusActive {
+		return nil, fmt.Errorf("target '%s' is not active (current status: %s)", targetID, t.Status)
+	}
+	return t, nil
+}
+
+func (h *Handler) verifyAssetBelongsToTarget(ctx context.Context, assetID string, targetID string) error {
+	if strings.TrimSpace(assetID) == "" {
+		return nil
+	}
+	if h.reconRepo == nil {
+		return errors.New("recon repository unavailable")
+	}
+	// Check if asset is found under targetID
+	targetAssets, err := h.reconRepo.ListAssets(ctx, targetID)
+	if err == nil {
+		for _, a := range targetAssets {
+			if a.ID == assetID {
+				return nil
+			}
+		}
+	}
+	// Check if asset exists under another target to provide explicit target isolation error
+	allAssets, listErr := h.reconRepo.ListAssets(ctx, "")
+	if listErr == nil {
+		for _, a := range allAssets {
+			if a.ID == assetID {
+				return fmt.Errorf("asset '%s' belongs to target '%s', not '%s'", assetID, a.TargetID, targetID)
+			}
+		}
+	}
+	return fmt.Errorf("asset '%s' not found", assetID)
+}
+
+func (h *Handler) verifyEvidenceBelongsToTarget(ctx context.Context, evidenceID string, targetID string, expectedAssetID string) (*models.Evidence, error) {
+	if strings.TrimSpace(evidenceID) == "" {
+		return nil, nil
+	}
+	if h.evidenceRepo == nil {
+		return nil, errors.New("evidence repository unavailable")
+	}
+	ev, err := h.evidenceRepo.GetEvidence(ctx, evidenceID)
+	if err != nil || ev == nil {
+		return nil, fmt.Errorf("evidence '%s' not found", evidenceID)
+	}
+	if ev.TargetID != targetID {
+		return nil, fmt.Errorf("evidence '%s' belongs to target '%s', not '%s'", evidenceID, ev.TargetID, targetID)
+	}
+	if expectedAssetID != "" && ev.AssetID != "" && ev.AssetID != expectedAssetID {
+		return nil, fmt.Errorf("evidence '%s' belongs to asset '%s', not '%s'", evidenceID, ev.AssetID, expectedAssetID)
+	}
+	return ev, nil
+}
+
+func (h *Handler) verifyAuthContextBelongsToTarget(ctx context.Context, authContextID string, targetID string) (*models.AuthContext, error) {
+	if strings.TrimSpace(authContextID) == "" {
+		return nil, nil
+	}
+	if h.reasoningRepo == nil {
+		return nil, errors.New("reasoning repository unavailable")
+	}
+	contexts, err := h.reasoningRepo.ListAuthContexts(ctx, targetID)
+	if err == nil {
+		for _, ac := range contexts {
+			if ac.ID == authContextID {
+				return ac, nil
+			}
+		}
+	}
+	allContexts, err := h.reasoningRepo.ListAuthContexts(ctx, "")
+	if err == nil {
+		for _, ac := range allContexts {
+			if ac.ID == authContextID {
+				return nil, fmt.Errorf("auth context '%s' belongs to target '%s', not '%s'", authContextID, ac.TargetID, targetID)
+			}
+		}
+	}
+	return nil, fmt.Errorf("auth context '%s' not found", authContextID)
+}
+
+func (h *Handler) verifySignalBelongsToTarget(ctx context.Context, signalID string, targetID string) (*models.ReasoningSignal, error) {
+	if strings.TrimSpace(signalID) == "" {
+		return nil, nil
+	}
+	if h.reasoningRepo == nil {
+		return nil, errors.New("reasoning repository unavailable")
+	}
+	sig, err := h.reasoningRepo.GetReasoningSignal(ctx, signalID)
+	if err != nil || sig == nil {
+		return nil, fmt.Errorf("signal '%s' not found", signalID)
+	}
+	if sig.TargetID != targetID {
+		return nil, fmt.Errorf("signal '%s' belongs to target '%s', not '%s'", signalID, sig.TargetID, targetID)
+	}
+	return sig, nil
 }
 
 // VerifyScopeRequest represents an interactive scope query.

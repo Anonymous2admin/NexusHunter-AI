@@ -25,16 +25,22 @@ type TargetRepository interface {
 // JobRepository specifies storage operations for scan jobs.
 type JobRepository interface {
 	CreateJob(ctx context.Context, job *models.ScanJob) error
+	CreateJobWithAuditEvent(ctx context.Context, job *models.ScanJob, event *models.Event) error
 	GetJobByID(ctx context.Context, id string) (*models.ScanJob, error)
 	ListJobs(ctx context.Context, targetID string) ([]*models.ScanJob, error)
 	UpdateJob(ctx context.Context, job *models.ScanJob) error
+	UpdateJobWithAuditEvent(ctx context.Context, job *models.ScanJob, event *models.Event) error
 	DeleteJob(ctx context.Context, id string) error
 }
 
 // EventRepository specifies storage operations for audit and telemetry events.
 type EventRepository interface {
 	Record(ctx context.Context, event *models.Event) error
+	Get(ctx context.Context, id string) (*models.Event, error)
 	ListRecent(ctx context.Context, limit int) ([]*models.Event, error)
+	ListByTarget(ctx context.Context, targetID string) ([]*models.Event, error)
+	ListByJob(ctx context.Context, jobID string) ([]*models.Event, error)
+	GetByCorrelationID(ctx context.Context, correlationID string) ([]*models.Event, error)
 }
 
 // ReconRepository specifies storage operations for reconnaissance assets, DNS, HTTP services, URLs, and runs.
@@ -220,6 +226,7 @@ type ScopeImportRepository interface {
 	ListImportReviews(ctx context.Context) ([]*models.ScopeImportReview, error)
 	ConfirmImportReview(ctx context.Context, id string, selectedRootDomain string, targetID string) error
 	ConfirmImportReviewProvenance(ctx context.Context, id string, selectedRootDomain string, targetID string, confirmedBy string) error
+	ConfirmScopeAndCreateTarget(ctx context.Context, id string, selectedRootDomain string, target *models.Target, confirmedBy string, selectionReason string) (*models.Target, *models.ScopeImportReview, error)
 }
 
 // JSIntelligenceRepository manages JavaScript assets, references, and redacted secret indicators.

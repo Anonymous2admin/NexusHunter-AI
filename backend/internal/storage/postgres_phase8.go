@@ -2,9 +2,13 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/models"
@@ -48,16 +52,25 @@ func (s *PostgresPhase8Storage) SaveImportReview(ctx context.Context, review *mo
 			confirmed_at = EXCLUDED.confirmed_at,
 			selection_reason = EXCLUDED.selection_reason;
 	`
-	rootJSON, _ := json.Marshal(review.RootDomains)
-	normJSON, _ := json.Marshal(review.Normalizations)
-	canonJSON, _ := json.Marshal(review.CanonicalScope)
+	rootJSON, err := json.Marshal(review.RootDomains)
+	if err != nil {
+		return fmt.Errorf("failed to marshal root domains: %w", err)
+	}
+	normJSON, err := json.Marshal(review.Normalizations)
+	if err != nil {
+		return fmt.Errorf("failed to marshal normalizations: %w", err)
+	}
+	canonJSON, err := json.Marshal(review.CanonicalScope)
+	if err != nil {
+		return fmt.Errorf("failed to marshal canonical scope: %w", err)
+	}
 
 	var targetIDVal *string
 	if review.TargetID != "" {
 		targetIDVal = &review.TargetID
 	}
 
-	_, err := s.db.ExecContext(ctx, query,
+	_, err = s.db.ExecContext(ctx, query,
 		review.ID, review.FileName, review.Status, review.SelectedRootDomain, targetIDVal,
 		review.RulesDiscovered, review.IncludeHostsCount, review.ExcludeHostsCount,
 		review.RegexRulesCount, review.PathRulesCount, review.WarningsCount, review.AmbiguousCount,
@@ -102,10 +115,16 @@ func (s *PostgresPhase8Storage) GetImportReview(ctx context.Context, id string) 
 	}
 
 	rev.TargetID = targetID
-	_ = json.Unmarshal(rootJSON, &rev.RootDomains)
-	_ = json.Unmarshal(normJSON, &rev.Normalizations)
+	if err := json.Unmarshal(rootJSON, &rev.RootDomains); err != nil {
+		return nil, fmt.Errorf("corrupted JSON in scope_imports.root_domains: %w", err)
+	}
+	if err := json.Unmarshal(normJSON, &rev.Normalizations); err != nil {
+		return nil, fmt.Errorf("corrupted JSON in scope_imports.normalizations: %w", err)
+	}
 	rev.CanonicalScope = &models.CanonicalScope{}
-	_ = json.Unmarshal(canonJSON, rev.CanonicalScope)
+	if err := json.Unmarshal(canonJSON, rev.CanonicalScope); err != nil {
+		return nil, fmt.Errorf("corrupted JSON in scope_imports.canonical_scope: %w", err)
+	}
 
 	return &rev, nil
 }
@@ -145,20 +164,29 @@ func (s *PostgresPhase8Storage) ListImportReviews(ctx context.Context) ([]*model
 			return nil, err
 		}
 		rev.TargetID = targetID
-		_ = json.Unmarshal(rootJSON, &rev.RootDomains)
-		_ = json.Unmarshal(normJSON, &rev.Normalizations)
+		if err := json.Unmarshal(rootJSON, &rev.RootDomains); err != nil {
+			return nil, fmt.Errorf("corrupted JSON in scope_imports.root_domains: %w", err)
+		}
+		if err := json.Unmarshal(normJSON, &rev.Normalizations); err != nil {
+			return nil, fmt.Errorf("corrupted JSON in scope_imports.normalizations: %w", err)
+		}
 		rev.CanonicalScope = &models.CanonicalScope{}
-		_ = json.Unmarshal(canonJSON, rev.CanonicalScope)
+		if err := json.Unmarshal(canonJSON, rev.CanonicalScope); err != nil {
+			return nil, fmt.Errorf("corrupted JSON in scope_imports.canonical_scope: %w", err)
+		}
 		list = append(list, &rev)
 	}
 	return list, nil
 }
 
 func (s *PostgresPhase8Storage) ConfirmImportReview(ctx context.Context, id string, selectedRootDomain string, targetID string) error {
-	return s.ConfirmImportReviewProvenance(ctx, id, selectedRootDomain, targetID, "lead-researcher")
+	return errors.New("CONFIRMED_BY_REQUIRED: Explicit operator identity is required for scope confirmation provenance; automatic identity fabrication is forbidden")
 }
 
 func (s *PostgresPhase8Storage) ConfirmImportReviewProvenance(ctx context.Context, id string, selectedRootDomain string, targetID string, confirmedBy string) error {
+	if strings.TrimSpace(confirmedBy) == "" {
+		return errors.New("CONFIRMED_BY_REQUIRED: Explicit operator identity is required for scope confirmation provenance; automatic identity fabrication is forbidden")
+	}
 	query := `
 		UPDATE scope_imports
 		SET status = 'CONFIRMED', selected_root_domain = $2, target_id = $3, confirmed_at = $4, confirmed_by = $5
@@ -173,6 +201,157 @@ func (s *PostgresPhase8Storage) ConfirmImportReviewProvenance(ctx context.Contex
 		return ErrInvalidState
 	}
 	return nil
+}
+
+// ConfirmScopeAndCreateTarget executes an authoritative transactional Postgres operation:
+// BEGIN
+//   SELECT scope import FOR UPDATE
+//   verify status
+//   verify selected root
+//   construct target
+//   INSERT target
+//   UPDATE scope_import
+// COMMIT
+// Any failure: ROLLBACK. No orphan confirmed scope imports.
+func (s *PostgresPhase8Storage) ConfirmScopeAndCreateTarget(
+	ctx context.Context,
+	id string,
+	selectedRootDomain string,
+	target *models.Target,
+	confirmedBy string,
+	selectionReason string,
+) (*models.Target, *models.ScopeImportReview, error) {
+	if selectedRootDomain == "" || strings.TrimSpace(selectedRootDomain) == "" {
+		return nil, nil, errors.New("explicit selected_root_domain is strictly required; automatic primary-root selection is disabled")
+	}
+	if confirmedBy == "" || strings.TrimSpace(confirmedBy) == "" {
+		return nil, nil, errors.New("CONFIRMED_BY_REQUIRED: Explicit operator identity is required for scope confirmation provenance")
+	}
+	if target == nil {
+		return nil, nil, errors.New("target definition cannot be nil")
+	}
+
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// 1. SELECT scope import FOR UPDATE
+	selectQuery := `
+		SELECT status, root_domains, canonical_scope_sha256
+		FROM scope_imports
+		WHERE id = $1
+		FOR UPDATE;
+	`
+	var status string
+	var rootJSON []byte
+	var canonScopeSHA string
+	if err := tx.QueryRowContext(ctx, selectQuery, id).Scan(&status, &rootJSON, &canonScopeSHA); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, ErrNotFound
+		}
+		return nil, nil, fmt.Errorf("failed to lock scope import: %w", err)
+	}
+
+	if status == "CONFIRMED" {
+		return nil, nil, ErrInvalidState
+	}
+	if status == "REJECTED" {
+		return nil, nil, errors.New("cannot create target from rejected scope import")
+	}
+
+	var rootCandidates []models.RootDomainCandidate
+	if err := json.Unmarshal(rootJSON, &rootCandidates); err != nil {
+		return nil, nil, fmt.Errorf("corrupted JSON in scope_imports.root_domains: %w", err)
+	}
+
+	validCandidate := false
+	for _, cand := range rootCandidates {
+		if cand.NormalizedDomain == selectedRootDomain {
+			validCandidate = true
+			break
+		}
+	}
+	if !validCandidate {
+		return nil, nil, errors.New("selected_root_domain is not among discovered root domain candidates")
+	}
+
+	now := time.Now().UTC()
+
+	// Compute Authorization Snapshot Hash (Requirement 9)
+	snapshotPayload := fmt.Sprintf("%s:%s:%s:%s:%s",
+		canonScopeSHA, selectedRootDomain, confirmedBy, now.Format(time.RFC3339), target.ID)
+	snapshotSum := sha256.Sum256([]byte(snapshotPayload))
+	snapshotHash := hex.EncodeToString(snapshotSum[:])
+
+	targetCopy := *target
+	targetCopy.RootDomain = selectedRootDomain
+	targetCopy.ScopeImportID = id
+	targetCopy.CanonicalScopeHash = snapshotHash
+	targetCopy.ConfirmationTimestamp = &now
+	targetCopy.CreatedAt = now
+	targetCopy.UpdatedAt = now
+
+	// 2. INSERT target
+	allowedDomainsJSON, err := json.Marshal(targetCopy.AllowedDomains)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal allowed domains: %w", err)
+	}
+	allowedURLsJSON, err := json.Marshal(targetCopy.AllowedURLPatterns)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal allowed url patterns: %w", err)
+	}
+	excludedPatternsJSON, err := json.Marshal(targetCopy.ExcludedPatterns)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal excluded patterns: %w", err)
+	}
+	scopeConfigJSON, err := json.Marshal(targetCopy.ScopeConfig)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal scope config: %w", err)
+	}
+
+	insertTargetQuery := `
+		INSERT INTO targets (
+			id, name, root_domain, allowed_domains, allowed_url_patterns,
+			excluded_patterns, scope_config, scope_import_id, canonical_scope_hash,
+			confirmation_timestamp, status, created_at, updated_at
+		) VALUES (
+			$1, $2, $3, $4, $5,
+			$6, $7, $8, $9,
+			$10, $11, $12, $13
+		);
+	`
+	if _, err := tx.ExecContext(ctx, insertTargetQuery,
+		targetCopy.ID, targetCopy.Name, targetCopy.RootDomain, allowedDomainsJSON, allowedURLsJSON,
+		excludedPatternsJSON, scopeConfigJSON, targetCopy.ScopeImportID, targetCopy.CanonicalScopeHash,
+		targetCopy.ConfirmationTimestamp, targetCopy.Status, targetCopy.CreatedAt, targetCopy.UpdatedAt,
+	); err != nil {
+		return nil, nil, fmt.Errorf("failed to insert target: %w", err)
+	}
+
+	// 3. UPDATE scope_import
+	updateImportQuery := `
+		UPDATE scope_imports
+		SET status = 'CONFIRMED', selected_root_domain = $2, target_id = $3,
+		    confirmed_at = $4, confirmed_by = $5, selection_reason = $6
+		WHERE id = $1;
+	`
+	if _, err := tx.ExecContext(ctx, updateImportQuery,
+		id, selectedRootDomain, targetCopy.ID, now, confirmedBy, selectionReason,
+	); err != nil {
+		return nil, nil, fmt.Errorf("failed to update scope import: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, nil, fmt.Errorf("failed to commit scope confirmation transaction: %w", err)
+	}
+
+	rev, err := s.GetImportReview(ctx, id)
+	if err != nil {
+		return &targetCopy, nil, nil
+	}
+	return &targetCopy, rev, nil
 }
 
 // ==========================================
@@ -538,9 +717,15 @@ func (s *PostgresPhase8Storage) GetWAFObservation(ctx context.Context, targetID,
 		return nil, err
 	}
 
-	_ = json.Unmarshal(evJSON, &obs.EvidenceIDs)
-	_ = json.Unmarshal(matchJSON, &obs.MatchedIndicators)
-	_ = json.Unmarshal(hdrJSON, &obs.ObservedHeaders)
+	if err := json.Unmarshal(evJSON, &obs.EvidenceIDs); err != nil {
+		return nil, fmt.Errorf("corrupted JSON in waf_observations.evidence_ids: %w", err)
+	}
+	if err := json.Unmarshal(matchJSON, &obs.MatchedIndicators); err != nil {
+		return nil, fmt.Errorf("corrupted JSON in waf_observations.matched_indicators: %w", err)
+	}
+	if err := json.Unmarshal(hdrJSON, &obs.ObservedHeaders); err != nil {
+		return nil, fmt.Errorf("corrupted JSON in waf_observations.observed_headers: %w", err)
+	}
 
 	return &obs, nil
 }
@@ -573,9 +758,15 @@ func (s *PostgresPhase8Storage) ListWAFObservations(ctx context.Context, targetI
 		); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(evJSON, &obs.EvidenceIDs)
-		_ = json.Unmarshal(matchJSON, &obs.MatchedIndicators)
-		_ = json.Unmarshal(hdrJSON, &obs.ObservedHeaders)
+		if err := json.Unmarshal(evJSON, &obs.EvidenceIDs); err != nil {
+			return nil, fmt.Errorf("corrupted JSON in waf_observations.evidence_ids: %w", err)
+		}
+		if err := json.Unmarshal(matchJSON, &obs.MatchedIndicators); err != nil {
+			return nil, fmt.Errorf("corrupted JSON in waf_observations.matched_indicators: %w", err)
+		}
+		if err := json.Unmarshal(hdrJSON, &obs.ObservedHeaders); err != nil {
+			return nil, fmt.Errorf("corrupted JSON in waf_observations.observed_headers: %w", err)
+		}
 		list = append(list, &obs)
 	}
 	return list, nil
@@ -686,10 +877,18 @@ func (s *PostgresPhase8Storage) GetInvestigationPlan(ctx context.Context, id str
 		return nil, err
 	}
 
-	_ = json.Unmarshal(whyJSON, &p.WhyInteresting)
-	_ = json.Unmarshal(reqEvJSON, &p.RequiredEvidence)
-	_ = json.Unmarshal(scopeReqJSON, &p.ScopeRequirements)
-	_ = json.Unmarshal(sourceEvJSON, &p.SourceEvidenceIDs)
+	if err := json.Unmarshal(whyJSON, &p.WhyInteresting); err != nil {
+		return nil, fmt.Errorf("corrupted JSON in investigation_plans.why_interesting: %w", err)
+	}
+	if err := json.Unmarshal(reqEvJSON, &p.RequiredEvidence); err != nil {
+		return nil, fmt.Errorf("corrupted JSON in investigation_plans.required_evidence: %w", err)
+	}
+	if err := json.Unmarshal(scopeReqJSON, &p.ScopeRequirements); err != nil {
+		return nil, fmt.Errorf("corrupted JSON in investigation_plans.scope_requirements: %w", err)
+	}
+	if err := json.Unmarshal(sourceEvJSON, &p.SourceEvidenceIDs); err != nil {
+		return nil, fmt.Errorf("corrupted JSON in investigation_plans.source_evidence_ids: %w", err)
+	}
 
 	// Fetch steps
 	stepRows, err := s.db.QueryContext(ctx, `
@@ -746,10 +945,18 @@ func (s *PostgresPhase8Storage) ListInvestigationPlans(ctx context.Context, targ
 		); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(whyJSON, &p.WhyInteresting)
-		_ = json.Unmarshal(reqEvJSON, &p.RequiredEvidence)
-		_ = json.Unmarshal(scopeReqJSON, &p.ScopeRequirements)
-		_ = json.Unmarshal(sourceEvJSON, &p.SourceEvidenceIDs)
+		if err := json.Unmarshal(whyJSON, &p.WhyInteresting); err != nil {
+			return nil, fmt.Errorf("corrupted JSON in investigation_plans.why_interesting: %w", err)
+		}
+		if err := json.Unmarshal(reqEvJSON, &p.RequiredEvidence); err != nil {
+			return nil, fmt.Errorf("corrupted JSON in investigation_plans.required_evidence: %w", err)
+		}
+		if err := json.Unmarshal(scopeReqJSON, &p.ScopeRequirements); err != nil {
+			return nil, fmt.Errorf("corrupted JSON in investigation_plans.scope_requirements: %w", err)
+		}
+		if err := json.Unmarshal(sourceEvJSON, &p.SourceEvidenceIDs); err != nil {
+			return nil, fmt.Errorf("corrupted JSON in investigation_plans.source_evidence_ids: %w", err)
+		}
 		list = append(list, &p)
 	}
 	return list, nil

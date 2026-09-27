@@ -117,6 +117,9 @@ type Evidence struct {
 	Source                  EvidenceSource         `json:"source"`
 	EvidenceType            EvidenceType           `json:"evidence_type"`
 	Summary                 string                 `json:"summary"`
+	URL                     string                 `json:"url,omitempty"`
+	DataOrigin              string                 `json:"data_origin,omitempty"`
+	VerificationStatus      string                 `json:"verification_status,omitempty"`
 	CapturedAt              time.Time              `json:"captured_at"`
 	StatusCode              int                    `json:"status_code,omitempty"`
 	Request                 *HTTPRequestContext    `json:"request,omitempty"`
@@ -130,6 +133,7 @@ type Evidence struct {
 	RedactionStatus         RedactionStatusRecord  `json:"redaction_status"`
 	CanonicalRepresentation string                 `json:"canonical_representation,omitempty"`
 	SHA256                  string                 `json:"sha256"` // Integrity hash over canonical representation
+	IntegrityHash           string                 `json:"integrity_hash,omitempty"`
 	Provenance              EvidenceProvenance     `json:"provenance"`
 	Metadata                map[string]interface{} `json:"metadata,omitempty"`
 }

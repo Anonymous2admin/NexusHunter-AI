@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,10 +17,12 @@ import (
 )
 
 var (
-	ErrOverlyBroadPattern = errors.New("regex is overly broad or universal wildcard (e.g. '.*', '^.*$')")
-	ErrInvalidRegex       = errors.New("invalid regular expression")
-	ErrNoDomainsExtracted = errors.New("zero root domains extracted from scope")
-	ErrAmbiguousScope     = errors.New("scope import contains ambiguous domain rules requiring manual review")
+	ErrOverlyBroadPattern     = errors.New("regex is overly broad or universal wildcard (e.g. '.*', '^.*$')")
+	ErrInvalidRegex           = errors.New("invalid regular expression")
+	ErrNoDomainsExtracted     = errors.New("zero root domains extracted from scope")
+	ErrAmbiguousScope         = errors.New("scope import contains ambiguous domain rules requiring manual review")
+	ErrNormalizationCollision = errors.New("NORMALIZATION_COLLISION: distinct raw keys collapsed to identical normalized key")
+	ErrEmptyHostRule          = errors.New("EMPTY_HOST_RULE: scope rule has empty, missing, or invalid host; fail closed")
 )
 
 // Universal dangerous regex patterns that must fail closed.
@@ -29,6 +32,24 @@ var dangerousBroadPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^\s*\.\+\s*$`),
 	regexp.MustCompile(`^\s*\^\.\+\$\s*$`),
 	regexp.MustCompile(`^\s*[\^]?\.\*[\$]?\s*$`),
+}
+
+// Known two-part public suffixes for accurate registrable domain extraction.
+var knownTwoPartPublicSuffixes = map[string]bool{
+	"co.uk": true, "org.uk": true, "gov.uk": true, "ac.uk": true, "me.uk": true, "net.uk": true,
+	"com.au": true, "net.au": true, "org.au": true, "edu.au": true, "gov.au": true,
+	"co.nz": true, "net.nz": true, "org.nz": true, "govt.nz": true, "ac.nz": true,
+	"co.jp": true, "ne.jp": true, "or.jp": true, "go.jp": true, "ac.jp": true,
+	"com.br": true, "net.br": true, "org.br": true, "gov.br": true,
+	"co.in": true, "net.in": true, "org.in": true, "gen.in": true, "firm.in": true,
+	"com.sg": true, "net.sg": true, "org.sg": true, "gov.sg": true, "edu.sg": true,
+	"com.mx": true, "net.mx": true, "org.mx": true, "edu.mx": true, "gob.mx": true,
+	"co.za": true, "org.za": true, "net.za": true, "web.za": true,
+	"com.tr": true, "net.tr": true, "org.tr": true, "edu.tr": true, "gov.tr": true,
+	"com.hk": true, "org.hk": true, "net.hk": true, "edu.hk": true, "gov.hk": true,
+	"com.tw": true, "org.tw": true, "net.tw": true, "edu.tw": true, "gov.tw": true,
+	"com.my": true, "org.my": true, "net.my": true, "edu.my": true, "gov.my": true,
+	"co.kr": true, "ne.kr": true, "or.kr": true, "re.kr": true,
 }
 
 // ImportSanitizer coordinates the fail-closed scope ingestion and normalization pipeline.
@@ -49,11 +70,30 @@ func NewSanitizer() *ScopeImportSanitizer {
 	return NewScopeImportSanitizer()
 }
 
-
 func randomID(prefix string) string {
 	b := make([]byte, 6)
 	_, _ = rand.Read(b)
 	return fmt.Sprintf("%s-%s", prefix, hex.EncodeToString(b))
+}
+
+// extractRegistrableDomain extracts the authoritative registrable domain using public-suffix-aware rules.
+func extractRegistrableDomain(hostname string) string {
+	hostname = strings.ToLower(strings.TrimSpace(hostname))
+	hostname = strings.Trim(hostname, ".")
+	if hostname == "" {
+		return ""
+	}
+	parts := strings.Split(hostname, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	if len(parts) >= 3 {
+		suffix2 := parts[len(parts)-2] + "." + parts[len(parts)-1]
+		if knownTwoPartPublicSuffixes[suffix2] {
+			return parts[len(parts)-3] + "." + suffix2
+		}
+	}
+	return parts[len(parts)-2] + "." + parts[len(parts)-1]
 }
 
 // SanitizeScopeFile processes raw uploaded scope data through the normalization pipeline.
@@ -68,9 +108,12 @@ func (s *ScopeImportSanitizer) SanitizeScopeFile(raw []byte, filename string) (*
 		return nil, fmt.Errorf("malformed JSON scope: %w", err)
 	}
 
-	// 2. Structural & Key Normalization (recursive key trim)
+	// 2. Structural & Key Normalization (recursive key trim with collision detection)
 	normalizations := make([]models.ScopeNormalization, 0)
-	cleanedData := s.normalizeKeysRecursively(parsed, "", &normalizations)
+	cleanedData, err := s.normalizeKeysRecursively(parsed, "", &normalizations)
+	if err != nil {
+		return nil, err
+	}
 
 	// 3. Extract into Canonical Scope Representation
 	canonical, err := s.buildCanonicalScope(cleanedData, filename, &normalizations)
@@ -78,34 +121,51 @@ func (s *ScopeImportSanitizer) SanitizeScopeFile(raw []byte, filename string) (*
 		return nil, err
 	}
 
-	// 4. Multi-Root Domain Discovery
+	// 4. Multi-Root Domain Discovery (authoritative roots derived ONLY from include rules)
 	rootCandidates := s.discoverRootDomains(canonical, filename)
 	if len(rootCandidates) == 0 {
 		return nil, ErrNoDomainsExtracted
 	}
 
-	// Fail-closed root domain selection:
-	// If exactly 1 root domain exists, it is marked as CANDIDATE.
-	// If multiple roots exist, NO silent default selection is permitted (must be confirmed by operator).
-	selectedDomain := ""
-	if len(rootCandidates) == 1 {
-		selectedDomain = rootCandidates[0].NormalizedDomain
-		rootCandidates[0].Status = "CANDIDATE"
-	} else {
-		for i := range rootCandidates {
-			if rootCandidates[i].Status != "AMBIGUOUS" {
-				rootCandidates[i].Status = "DISCOVERED"
-			}
-		}
+	// Phase 8.2R-FINAL.4 Requirement 8:
+	// CanonicalScope.PrimaryRootDomain MUST NOT be treated as authoritative before human confirmation.
+	// DiscoveredRootCandidates stores discovered roots.
+	// ConfirmedPrimaryRootDomain remains strictly empty.
+	// review.SelectedRootDomain remains strictly empty.
+	for i := range rootCandidates {
+		rootCandidates[i].Status = "DISCOVERED"
 	}
-	canonical.PrimaryRootDomain = selectedDomain
+	canonical.PrimaryRootDomain = ""
+	canonical.ConfirmedPrimaryRootDomain = ""
 
-	// Populate root domains list
-	uniqueRoots := make([]string, 0, len(rootCandidates))
+	// Extract unique sorted root candidates list
+	uniqueRootsMap := make(map[string]bool)
 	for _, c := range rootCandidates {
-		uniqueRoots = append(uniqueRoots, c.NormalizedDomain)
+		uniqueRootsMap[c.NormalizedDomain] = true
 	}
+	uniqueRoots := make([]string, 0, len(uniqueRootsMap))
+	for r := range uniqueRootsMap {
+		uniqueRoots = append(uniqueRoots, r)
+	}
+	sort.Strings(uniqueRoots)
 	canonical.RootDomains = uniqueRoots
+	canonical.DiscoveredRootCandidates = uniqueRoots
+
+	// 5. Deterministic Canonicalization (Requirement 14):
+	// Sort rules, root candidates, normalizations, and canonical collections before hashing
+	s.sortCanonicalScope(canonical)
+	sort.Slice(rootCandidates, func(i, j int) bool {
+		if rootCandidates[i].NormalizedDomain != rootCandidates[j].NormalizedDomain {
+			return rootCandidates[i].NormalizedDomain < rootCandidates[j].NormalizedDomain
+		}
+		return rootCandidates[i].SourcePath < rootCandidates[j].SourcePath
+	})
+	sort.Slice(normalizations, func(i, j int) bool {
+		if normalizations[i].Field != normalizations[j].Field {
+			return normalizations[i].Field < normalizations[j].Field
+		}
+		return normalizations[i].Original < normalizations[j].Original
+	})
 	canonical.Normalizations = normalizations
 
 	warningsCount := 0
@@ -121,15 +181,21 @@ func (s *ScopeImportSanitizer) SanitizeScopeFile(raw []byte, filename string) (*
 		}
 	}
 
-	// Compute Cryptographic Hashes for Full Provenance & Auditability (Section 9)
+	// Compute Cryptographic Hashes for Full Provenance & Auditability (Requirement 9 & 14)
 	origFileHash := sha256.Sum256(raw)
 	origFileHex := hex.EncodeToString(origFileHash[:])
 
-	canonicalJSON, _ := json.Marshal(canonical)
+	canonicalJSON, err := json.Marshal(canonical)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize canonical scope: %w", err)
+	}
 	canonicalHash := sha256.Sum256(canonicalJSON)
 	canonicalHex := hex.EncodeToString(canonicalHash[:])
 
-	normJSON, _ := json.Marshal(normalizations)
+	normJSON, err := json.Marshal(normalizations)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize normalization manifest: %w", err)
+	}
 	normHash := sha256.Sum256(normJSON)
 	normHex := hex.EncodeToString(normHash[:])
 
@@ -138,7 +204,7 @@ func (s *ScopeImportSanitizer) SanitizeScopeFile(raw []byte, filename string) (*
 		FileName:                    filename,
 		Status:                      "PENDING_CONFIRMATION",
 		RootDomains:                 rootCandidates,
-		SelectedRootDomain:          selectedDomain,
+		SelectedRootDomain:          "", // Strictly empty until human confirmation
 		RulesDiscovered:             len(canonical.IncludeHosts) + len(canonical.ExcludeHosts) + len(canonical.IncludeURLs) + len(canonical.ExcludeURLs),
 		IncludeHostsCount:           len(canonical.IncludeHosts),
 		ExcludeHostsCount:           len(canonical.ExcludeHosts),
@@ -157,18 +223,71 @@ func (s *ScopeImportSanitizer) SanitizeScopeFile(raw []byte, filename string) (*
 	return review, nil
 }
 
-// normalizeKeysRecursively traverses JSON structures, strictly trimming leading and trailing whitespace from keys.
-func (s *ScopeImportSanitizer) normalizeKeysRecursively(node any, currentPath string, normalizations *[]models.ScopeNormalization) any {
+// sortCanonicalScope applies deterministic ordering to all rules and collections in CanonicalScope.
+func (s *ScopeImportSanitizer) sortCanonicalScope(c *models.CanonicalScope) {
+	ruleLess := func(a, b models.AdvancedScopeRule) bool {
+		if a.Host != b.Host {
+			return a.Host < b.Host
+		}
+		if a.Port != b.Port {
+			return a.Port < b.Port
+		}
+		if a.Protocol != b.Protocol {
+			return a.Protocol < b.Protocol
+		}
+		return a.File < b.File
+	}
+
+	sort.Slice(c.IncludeHosts, func(i, j int) bool {
+		return ruleLess(c.IncludeHosts[i], c.IncludeHosts[j])
+	})
+	sort.Slice(c.ExcludeHosts, func(i, j int) bool {
+		return ruleLess(c.ExcludeHosts[i], c.ExcludeHosts[j])
+	})
+	sort.Slice(c.IncludeURLs, func(i, j int) bool {
+		return ruleLess(c.IncludeURLs[i], c.IncludeURLs[j])
+	})
+	sort.Slice(c.ExcludeURLs, func(i, j int) bool {
+		return ruleLess(c.ExcludeURLs[i], c.ExcludeURLs[j])
+	})
+	sort.Slice(c.PathRules, func(i, j int) bool {
+		if c.PathRules[i].Path != c.PathRules[j].Path {
+			return c.PathRules[i].Path < c.PathRules[j].Path
+		}
+		return c.PathRules[i].Excluded && !c.PathRules[j].Excluded
+	})
+}
+
+// normalizeKeysRecursively traverses JSON structures, trimming leading and trailing whitespace from keys.
+// Returns ErrNormalizationCollision if two distinct raw keys collapse to the same normalized key.
+func (s *ScopeImportSanitizer) normalizeKeysRecursively(node any, currentPath string, normalizations *[]models.ScopeNormalization) (any, error) {
 	switch v := node.(type) {
 	case map[string]any:
 		cleanedMap := make(map[string]any, len(v))
-		for k, val := range v {
+		seenNormalizedKeys := make(map[string]string) // normalizedKey -> originalKey
+
+		// Process keys in sorted order for determinism
+		keys := make([]string, 0, len(v))
+		for k := range v {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		for _, k := range keys {
+			val := v[k]
 			trimmedKey := strings.TrimSpace(k)
+			if existingOrig, exists := seenNormalizedKeys[trimmedKey]; exists && existingOrig != k {
+				return nil, fmt.Errorf("%w: keys '%s' and '%s' normalize to identical key '%s' at path '%s'",
+					ErrNormalizationCollision, existingOrig, k, trimmedKey, currentPath)
+			}
+			seenNormalizedKeys[trimmedKey] = k
+
 			if trimmedKey != k {
 				*normalizations = append(*normalizations, models.ScopeNormalization{
 					Original:   k,
 					Normalized: trimmedKey,
 					Field:      fmt.Sprintf("%s/%s", currentPath, k),
+					TokenType:  "STRUCTURAL_KEY",
 					Reason:     "trimmed leading/trailing whitespace from JSON object key",
 					Severity:   "INFO",
 				})
@@ -177,24 +296,33 @@ func (s *ScopeImportSanitizer) normalizeKeysRecursively(node any, currentPath st
 			if currentPath != "" {
 				newPath = fmt.Sprintf("%s/%s", currentPath, trimmedKey)
 			}
-			cleanedMap[trimmedKey] = s.normalizeKeysRecursively(val, newPath, normalizations)
+			sub, err := s.normalizeKeysRecursively(val, newPath, normalizations)
+			if err != nil {
+				return nil, err
+			}
+			cleanedMap[trimmedKey] = sub
 		}
-		return cleanedMap
+		return cleanedMap, nil
 	case []any:
 		cleanedSlice := make([]any, len(v))
 		for i, item := range v {
 			itemPath := fmt.Sprintf("%s[%d]", currentPath, i)
-			cleanedSlice[i] = s.normalizeKeysRecursively(item, itemPath, normalizations)
+			sub, err := s.normalizeKeysRecursively(item, itemPath, normalizations)
+			if err != nil {
+				return nil, err
+			}
+			cleanedSlice[i] = sub
 		}
-		return cleanedSlice
+		return cleanedSlice, nil
 	case string:
-		return v
+		return v, nil
 	default:
-		return v
+		return v, nil
 	}
 }
 
 // NormalizeRegex applies safe transformations to known corrupted regular expressions.
+// Fails closed if pattern is empty, overly broad, or invalid.
 func (s *ScopeImportSanitizer) NormalizeRegex(rawRegex string, fieldName string, normalizations *[]models.ScopeNormalization) (string, error) {
 	trimmed := strings.TrimSpace(rawRegex)
 	if trimmed != rawRegex {
@@ -202,13 +330,14 @@ func (s *ScopeImportSanitizer) NormalizeRegex(rawRegex string, fieldName string,
 			Original:   rawRegex,
 			Normalized: trimmed,
 			Field:      fieldName,
+			TokenType:  "REGEX",
 			Reason:     "trimmed whitespace from regex pattern",
 			Severity:   "INFO",
 		})
 	}
 
 	if trimmed == "" {
-		return "", nil
+		return "", ErrEmptyHostRule
 	}
 
 	// Check for dangerous universal wildcards first (fail closed)
@@ -230,12 +359,12 @@ func (s *ScopeImportSanitizer) NormalizeRegex(rawRegex string, fieldName string,
 			Original:   rawRegex,
 			Normalized: normalized,
 			Field:      fieldName,
+			TokenType:  "REGEX",
 			Reason:     "recognized corrupted wildcard representation ('^. \\.domain$') normalized to canonical wildcard regex",
 			Severity:   "WARNING",
 		})
 		trimmed = normalized
 	}
-
 
 	// Verify that the resulting regex compiles safely
 	if _, err := regexp.Compile(trimmed); err != nil {
@@ -262,7 +391,9 @@ func (s *ScopeImportSanitizer) buildCanonicalScope(data any, filename string, no
 		if targetObj, hasTarget := rootMap["target"].(map[string]any); hasTarget {
 			if scopeObj, hasScope := targetObj["scope"].(map[string]any); hasScope {
 				canonical.SourceFiles[0].Format = "BURP_SUITE"
-				s.parseBurpScope(scopeObj, canonical, normalizations)
+				if err := s.parseBurpScope(scopeObj, canonical, normalizations); err != nil {
+					return nil, err
+				}
 				return canonical, nil
 			}
 		}
@@ -270,14 +401,18 @@ func (s *ScopeImportSanitizer) buildCanonicalScope(data any, filename string, no
 		// Check direct include / exclude
 		if _, hasInclude := rootMap["include"]; hasInclude {
 			canonical.SourceFiles[0].Format = "ADVANCED_SCOPE"
-			s.parseBurpScope(rootMap, canonical, normalizations)
+			if err := s.parseBurpScope(rootMap, canonical, normalizations); err != nil {
+				return nil, err
+			}
 			return canonical, nil
 		}
 
 		// Check HackerOne style: { "scope": [ { "asset_identifier": "...", "eligible_for_bounty": true } ] }
 		if scopeList, hasList := rootMap["scope"].([]any); hasList {
 			canonical.SourceFiles[0].Format = "HACKERONE"
-			s.parseAssetList(scopeList, canonical, normalizations)
+			if err := s.parseAssetList(scopeList, canonical, normalizations); err != nil {
+				return nil, err
+			}
 			return canonical, nil
 		}
 	}
@@ -285,8 +420,8 @@ func (s *ScopeImportSanitizer) buildCanonicalScope(data any, filename string, no
 	return nil, errors.New("unrecognized scope JSON structure")
 }
 
-func (s *ScopeImportSanitizer) parseBurpScope(scopeObj map[string]any, canonical *models.CanonicalScope, normalizations *[]models.ScopeNormalization) {
-	parseRuleSlice := func(items []any, isInclude bool) {
+func (s *ScopeImportSanitizer) parseBurpScope(scopeObj map[string]any, canonical *models.CanonicalScope, normalizations *[]models.ScopeNormalization) error {
+	parseRuleSlice := func(items []any, isInclude bool) error {
 		for i, item := range items {
 			ruleMap, ok := item.(map[string]any)
 			if !ok {
@@ -300,17 +435,23 @@ func (s *ScopeImportSanitizer) parseBurpScope(scopeObj map[string]any, canonical
 				}
 			}
 
-			rawHost, _ := ruleMap["host"].(string)
+			rawHost, hasHost := ruleMap["host"].(string)
+			if !hasHost || strings.TrimSpace(rawHost) == "" {
+				// Requirement 12: Empty or missing host rule must fail closed
+				return fmt.Errorf("%w: rule[%d] has missing or empty host", ErrEmptyHostRule, i)
+			}
+
 			normalizedHost, err := s.NormalizeRegex(rawHost, fmt.Sprintf("rule[%d].host", i), normalizations)
 			if err != nil {
 				*normalizations = append(*normalizations, models.ScopeNormalization{
 					Original:   rawHost,
 					Normalized: "[REJECTED]",
 					Field:      fmt.Sprintf("rule[%d].host", i),
+					TokenType:  "REGEX",
 					Reason:     fmt.Sprintf("regex safety failure: %v", err),
 					Severity:   "CRITICAL",
 				})
-				continue
+				return fmt.Errorf("%w at rule[%d]: %v", ErrEmptyHostRule, i, err)
 			}
 
 			protocol, _ := ruleMap["protocol"].(string)
@@ -342,27 +483,33 @@ func (s *ScopeImportSanitizer) parseBurpScope(scopeObj map[string]any, canonical
 				canonical.ExcludeHosts = append(canonical.ExcludeHosts, rule)
 			}
 		}
+		return nil
 	}
 
 	if inc, ok := scopeObj["include"].([]any); ok {
-		parseRuleSlice(inc, true)
+		if err := parseRuleSlice(inc, true); err != nil {
+			return err
+		}
 	}
 	if exc, ok := scopeObj["exclude"].([]any); ok {
-		parseRuleSlice(exc, false)
+		if err := parseRuleSlice(exc, false); err != nil {
+			return err
+		}
 	}
 	canonical.SourceFiles[0].RuleCount = len(canonical.IncludeHosts) + len(canonical.ExcludeHosts)
+	return nil
 }
 
-func (s *ScopeImportSanitizer) parseAssetList(items []any, canonical *models.CanonicalScope, normalizations *[]models.ScopeNormalization) {
+func (s *ScopeImportSanitizer) parseAssetList(items []any, canonical *models.CanonicalScope, normalizations *[]models.ScopeNormalization) error {
 	for i, item := range items {
 		m, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
-		ident, _ := m["asset_identifier"].(string)
+		ident, hasIdent := m["asset_identifier"].(string)
 		trimmed := strings.TrimSpace(ident)
-		if trimmed == "" {
-			continue
+		if !hasIdent || trimmed == "" {
+			return fmt.Errorf("%w: asset[%d] has empty asset_identifier", ErrEmptyHostRule, i)
 		}
 
 		eligible := true
@@ -392,7 +539,7 @@ func (s *ScopeImportSanitizer) parseAssetList(items []any, canonical *models.Can
 
 		normRegex, err := s.NormalizeRegex(regexHost, fmt.Sprintf("asset[%d]", i), normalizations)
 		if err != nil {
-			continue
+			return fmt.Errorf("%w: asset[%d] invalid host pattern '%s': %v", ErrEmptyHostRule, i, regexHost, err)
 		}
 
 		rule := models.AdvancedScopeRule{
@@ -408,60 +555,55 @@ func (s *ScopeImportSanitizer) parseAssetList(items []any, canonical *models.Can
 		}
 	}
 	canonical.SourceFiles[0].RuleCount = len(canonical.IncludeHosts) + len(canonical.ExcludeHosts)
+	return nil
 }
 
-// discoverRootDomains extracts all candidate root domains from the canonical scope rules.
+// discoverRootDomains extracts all candidate root domains strictly from include rules.
+// Requirement 13: Authoritative roots MUST NOT be derived from EXCLUDE-only rules.
 func (s *ScopeImportSanitizer) discoverRootDomains(canonical *models.CanonicalScope, filename string) []models.RootDomainCandidate {
 	discovered := make(map[string]models.RootDomainCandidate)
 
-	extractCandidates := func(rules []models.AdvancedScopeRule, rulePrefix string) {
-		for i, rule := range rules {
-			host := rule.Host
-			cleaned := strings.Trim(host, "^$")
-			cleaned = strings.TrimPrefix(cleaned, ".*\\.")
-			cleaned = strings.TrimPrefix(cleaned, "\\.")
-			cleaned = strings.ReplaceAll(cleaned, "\\.", ".")
-			cleaned = strings.TrimSpace(cleaned)
+	for i, rule := range canonical.IncludeHosts {
+		host := rule.Host
+		cleaned := strings.Trim(host, "^$")
+		cleaned = strings.TrimPrefix(cleaned, ".*\\.")
+		cleaned = strings.TrimPrefix(cleaned, "\\.")
+		cleaned = strings.ReplaceAll(cleaned, "\\.", ".")
+		cleaned = strings.TrimSpace(cleaned)
 
-			// Extract base/root domain (e.g. admin.shopify.com -> shopify.com)
-			parts := strings.Split(cleaned, ".")
-			var domain string
-			if len(parts) >= 2 {
-				lastTwo := parts[len(parts)-2] + "." + parts[len(parts)-1]
-				if isValidHostname(lastTwo) {
-					domain = strings.ToLower(lastTwo)
-				}
+		domain := extractRegistrableDomain(cleaned)
+		if domain == "" {
+			domainMatch := regexp.MustCompile(`([a-zA-Z0-9\-]+\.[a-zA-Z]{2,})$`).FindString(cleaned)
+			if domainMatch != "" {
+				domain = extractRegistrableDomain(domainMatch)
 			}
-			if domain == "" {
-				domainMatch := regexp.MustCompile(`([a-zA-Z0-9\-]+\.[a-zA-Z]{2,})$`).FindString(cleaned)
-				if domainMatch != "" && isValidHostname(domainMatch) {
-					domain = strings.ToLower(domainMatch)
-				}
-			}
+		}
 
-			if domain != "" && isValidHostname(domain) {
-				if _, exists := discovered[domain]; !exists {
-					discovered[domain] = models.RootDomainCandidate{
-						ID:               randomID("cand"),
-						NormalizedDomain: domain,
-						SourceFile:       filename,
-						SourcePath:       fmt.Sprintf("%s[%d].host", rulePrefix, i),
-						SourceRuleID:     fmt.Sprintf("%s-%d", rulePrefix, i),
-						Evidence:         fmt.Sprintf("Discovered in rule pattern: '%s'", rule.Host),
-						Confidence:       "HIGH",
-						Status:           "DISCOVERED",
-					}
+		if domain != "" && isValidHostname(domain) {
+			if _, exists := discovered[domain]; !exists {
+				discovered[domain] = models.RootDomainCandidate{
+					ID:               randomID("cand"),
+					NormalizedDomain: domain,
+					SourceFile:       filename,
+					SourcePath:       fmt.Sprintf("include[%d].host", i),
+					SourceRuleID:     fmt.Sprintf("include-%d", i),
+					Evidence:         fmt.Sprintf("Discovered in include rule pattern: '%s'", rule.Host),
+					Confidence:       "HIGH",
+					Status:           "DISCOVERED",
 				}
 			}
 		}
 	}
 
-	extractCandidates(canonical.IncludeHosts, "include")
-	extractCandidates(canonical.ExcludeHosts, "exclude")
-
 	list := make([]models.RootDomainCandidate, 0, len(discovered))
 	for _, c := range discovered {
 		list = append(list, c)
 	}
+
+	// Deterministic ordering of candidates
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].NormalizedDomain < list[j].NormalizedDomain
+	})
+
 	return list
 }
