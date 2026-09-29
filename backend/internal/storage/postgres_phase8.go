@@ -176,6 +176,9 @@ func (s *PostgresPhase8Storage) ListImportReviews(ctx context.Context) ([]*model
 		}
 		list = append(list, &rev)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during scope imports iteration: %w", err)
+	}
 	return list, nil
 }
 
@@ -287,8 +290,12 @@ func (s *PostgresPhase8Storage) ConfirmScopeAndCreateTarget(
 
 	targetCopy := *target
 	targetCopy.RootDomain = selectedRootDomain
+	targetCopy.PrimaryRootDomain = selectedRootDomain
 	targetCopy.ScopeImportID = id
-	targetCopy.CanonicalScopeHash = snapshotHash
+	targetCopy.CanonicalScopeSHA256 = canonScopeSHA
+	targetCopy.CanonicalScopeHash = canonScopeSHA
+	targetCopy.AuthorizationSnapshotSHA256 = snapshotHash
+	targetCopy.ConfirmedBy = confirmedBy
 	targetCopy.ConfirmationTimestamp = &now
 	targetCopy.CreatedAt = now
 	targetCopy.UpdatedAt = now
@@ -313,18 +320,22 @@ func (s *PostgresPhase8Storage) ConfirmScopeAndCreateTarget(
 
 	insertTargetQuery := `
 		INSERT INTO targets (
-			id, name, root_domain, allowed_domains, allowed_url_patterns,
-			excluded_patterns, scope_config, scope_import_id, canonical_scope_hash,
+			id, name, root_domain, primary_root_domain, allowed_domains, allowed_url_patterns,
+			excluded_patterns, scope_config, scope_import_id, canonical_scope_sha256,
+			canonical_scope_hash, authorization_snapshot_sha256, confirmed_by,
 			confirmation_timestamp, status, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5,
-			$6, $7, $8, $9,
-			$10, $11, $12, $13
+			$1, $2, $3, $4, $5, $6,
+			$7, $8, $9, $10,
+			$11, $12, $13,
+			$14, $15, $16, $17
 		);
 	`
 	if _, err := tx.ExecContext(ctx, insertTargetQuery,
-		targetCopy.ID, targetCopy.Name, targetCopy.RootDomain, allowedDomainsJSON, allowedURLsJSON,
-		excludedPatternsJSON, scopeConfigJSON, targetCopy.ScopeImportID, targetCopy.CanonicalScopeHash,
+		targetCopy.ID, targetCopy.Name, targetCopy.RootDomain, targetCopy.PrimaryRootDomain,
+		allowedDomainsJSON, allowedURLsJSON, excludedPatternsJSON, scopeConfigJSON,
+		targetCopy.ScopeImportID, targetCopy.CanonicalScopeSHA256, targetCopy.CanonicalScopeHash,
+		targetCopy.AuthorizationSnapshotSHA256, targetCopy.ConfirmedBy,
 		targetCopy.ConfirmationTimestamp, targetCopy.Status, targetCopy.CreatedAt, targetCopy.UpdatedAt,
 	); err != nil {
 		return nil, nil, fmt.Errorf("failed to insert target: %w", err)
@@ -434,6 +445,9 @@ func (s *PostgresPhase8Storage) ListJSAssets(ctx context.Context, targetID, asse
 		}
 		list = append(list, &a)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during js assets iteration: %w", err)
+	}
 	return list, nil
 }
 
@@ -490,6 +504,9 @@ func (s *PostgresPhase8Storage) ListJSReferences(ctx context.Context, targetID, 
 		}
 		list = append(list, &ref)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during js references iteration: %w", err)
+	}
 	return list, nil
 }
 
@@ -540,6 +557,9 @@ func (s *PostgresPhase8Storage) ListSecretIndicators(ctx context.Context, target
 			return nil, err
 		}
 		list = append(list, &sec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during secret indicators iteration: %w", err)
 	}
 	return list, nil
 }
@@ -629,6 +649,9 @@ func (s *PostgresPhase8Storage) ListCloudReferences(ctx context.Context, targetI
 			return nil, err
 		}
 		list = append(list, &ref)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during cloud references iteration: %w", err)
 	}
 	return list, nil
 }
@@ -769,6 +792,9 @@ func (s *PostgresPhase8Storage) ListWAFObservations(ctx context.Context, targetI
 		}
 		list = append(list, &obs)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during waf observations iteration: %w", err)
+	}
 	return list, nil
 }
 
@@ -890,7 +916,7 @@ func (s *PostgresPhase8Storage) GetInvestigationPlan(ctx context.Context, id str
 		return nil, fmt.Errorf("corrupted JSON in investigation_plans.source_evidence_ids: %w", err)
 	}
 
-	// Fetch steps
+	// Fetch steps (Requirement 15: never silently ignore step scan errors)
 	stepRows, err := s.db.QueryContext(ctx, `
 		SELECT step_number, action_type, description, target_url, status,
 		       approved_by_human, approved_at, COALESCE(result_evidence_id, ''), COALESCE(result_observation, '')
@@ -898,16 +924,22 @@ func (s *PostgresPhase8Storage) GetInvestigationPlan(ctx context.Context, id str
 		WHERE plan_id = $1
 		ORDER BY step_number ASC;
 	`, id)
-	if err == nil {
-		defer stepRows.Close()
-		for stepRows.Next() {
-			var st models.InvestigationPlanStep
-			_ = stepRows.Scan(
-				&st.StepNumber, &st.ActionType, &st.Description, &st.TargetURL, &st.Status,
-				&st.ApprovedByHuman, &st.ApprovedAt, &st.ResultEvidenceID, &st.ResultObservation,
-			)
-			p.Steps = append(p.Steps, st)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query investigation plan steps: %w", err)
+	}
+	defer stepRows.Close()
+	for stepRows.Next() {
+		var st models.InvestigationPlanStep
+		if err := stepRows.Scan(
+			&st.StepNumber, &st.ActionType, &st.Description, &st.TargetURL, &st.Status,
+			&st.ApprovedByHuman, &st.ApprovedAt, &st.ResultEvidenceID, &st.ResultObservation,
+		); err != nil {
+			return nil, fmt.Errorf("corrupted step record in plan '%s': %w", id, err)
 		}
+		p.Steps = append(p.Steps, st)
+	}
+	if err := stepRows.Err(); err != nil {
+		return nil, fmt.Errorf("error during plan step iteration: %w", err)
 	}
 
 	return &p, nil
@@ -958,6 +990,9 @@ func (s *PostgresPhase8Storage) ListInvestigationPlans(ctx context.Context, targ
 			return nil, fmt.Errorf("corrupted JSON in investigation_plans.source_evidence_ids: %w", err)
 		}
 		list = append(list, &p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during investigation plans iteration: %w", err)
 	}
 	return list, nil
 }

@@ -89,11 +89,14 @@ func (p *PostgresStorage) GetTargetGraph(ctx context.Context, targetID string) (
 			return nil, err
 		}
 		n.Type = models.GraphNodeType(typeStr)
-		if len(propsRaw) > 0 {
-			_ = json.Unmarshal(propsRaw, &n.Properties)
+		if err := safeUnmarshal(propsRaw, &n.Properties, "graph_node.properties"); err != nil {
+			return nil, err
 		}
 		metrics[typeStr]++
 		nodes = append(nodes, &n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	// Fetch edges
@@ -119,10 +122,13 @@ func (p *PostgresStorage) GetTargetGraph(ctx context.Context, targetID string) (
 			return nil, err
 		}
 		e.Relationship = models.GraphEdgeType(relStr)
-		if len(propsRaw) > 0 {
-			_ = json.Unmarshal(propsRaw, &e.Properties)
+		if err := safeUnmarshal(propsRaw, &e.Properties, "graph_edge.properties"); err != nil {
+			return nil, err
 		}
 		edges = append(edges, &e)
+	}
+	if err := eRows.Err(); err != nil {
+		return nil, err
 	}
 
 	return &models.GraphData{
@@ -192,10 +198,13 @@ func (p *PostgresStorage) ListTemporalChanges(ctx context.Context, targetID stri
 			return nil, err
 		}
 		r.ChangeType = models.TemporalChangeType(typeStr)
-		if len(detailsRaw) > 0 {
-			_ = json.Unmarshal(detailsRaw, &r.Details)
+		if err := safeUnmarshal(detailsRaw, &r.Details, "temporal_change.details"); err != nil {
+			return nil, err
 		}
 		records = append(records, &r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return records, nil
 }
@@ -246,6 +255,9 @@ func (p *PostgresStorage) ListInvariantSignals(ctx context.Context, targetID str
 		s.StateFrom = models.SecurityState(stateFrom)
 		s.StateTo = models.SecurityState(stateTo)
 		sigs = append(sigs, &s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return sigs, nil
 }
@@ -301,13 +313,16 @@ func (p *PostgresStorage) ListBehaviorDifferences(ctx context.Context, targetID 
 		if err := rows.Scan(&d.ID, &d.TargetID, &d.AssetID, &d.ProbeAURL, &d.ProbeBURL, &d.ContextA, &d.ContextB, &d.StatusDiff, &d.LengthDiff, &headersRaw, &d.BodyDiffFingerprint, &d.StateChangeObserved, &d.TimingDeltaMS, &d.IsMeaningful, &detailsRaw, &d.DetectedAt); err != nil {
 			return nil, err
 		}
-		if len(headersRaw) > 0 {
-			_ = json.Unmarshal(headersRaw, &d.HeaderDiff)
+		if err := safeUnmarshal(headersRaw, &d.HeaderDiff, "behavior_difference.header_diff"); err != nil {
+			return nil, err
 		}
-		if len(detailsRaw) > 0 {
-			_ = json.Unmarshal(detailsRaw, &d.NormalizedDetails)
+		if err := safeUnmarshal(detailsRaw, &d.NormalizedDetails, "behavior_difference.normalized_details"); err != nil {
+			return nil, err
 		}
 		diffs = append(diffs, &d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return diffs, nil
 }
@@ -377,10 +392,18 @@ func (p *PostgresStorage) GetInvestigationCluster(ctx context.Context, id string
 	}
 
 	c.Status = models.ClusterStatus(statusStr)
-	_ = json.Unmarshal(factorsRaw, &c.PriorityFactors)
-	_ = json.Unmarshal(assetsRaw, &c.RelatedAssets)
-	_ = json.Unmarshal(endpointsRaw, &c.RelatedEndpoints)
-	_ = json.Unmarshal(valRaw, &c.RecommendedValidation)
+	if err := safeUnmarshal(factorsRaw, &c.PriorityFactors, "investigation_cluster.priority_factors"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(assetsRaw, &c.RelatedAssets, "investigation_cluster.related_assets"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(endpointsRaw, &c.RelatedEndpoints, "investigation_cluster.related_endpoints"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(valRaw, &c.RecommendedValidation, "investigation_cluster.recommended_validation"); err != nil {
+		return nil, err
+	}
 	return &c, nil
 }
 
@@ -408,11 +431,22 @@ func (p *PostgresStorage) ListInvestigationClusters(ctx context.Context, targetI
 			return nil, err
 		}
 		c.Status = models.ClusterStatus(statusStr)
-		_ = json.Unmarshal(factorsRaw, &c.PriorityFactors)
-		_ = json.Unmarshal(assetsRaw, &c.RelatedAssets)
-		_ = json.Unmarshal(endpointsRaw, &c.RelatedEndpoints)
-		_ = json.Unmarshal(valRaw, &c.RecommendedValidation)
+		if err := safeUnmarshal(factorsRaw, &c.PriorityFactors, "investigation_cluster.priority_factors"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(assetsRaw, &c.RelatedAssets, "investigation_cluster.related_assets"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(endpointsRaw, &c.RelatedEndpoints, "investigation_cluster.related_endpoints"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(valRaw, &c.RecommendedValidation, "investigation_cluster.recommended_validation"); err != nil {
+			return nil, err
+		}
 		clusters = append(clusters, &c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return clusters, nil
 }

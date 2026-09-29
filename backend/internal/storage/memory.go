@@ -15,6 +15,8 @@ import (
 )
 
 // MemoryStorage implements TargetRepository, JobRepository, EventRepository, ReconRepository, and AssetIntelligenceRepository in-memory.
+// Architectural Notice (Requirement 5):
+// PROCESS_LOCAL_ONLY, NON_DURABLE. Does not survive process restarts. Suitable for development, testing, and demo/synthetic runs.
 type MemoryStorage struct {
 	mu           sync.RWMutex
 	targets      map[string]*models.Target
@@ -198,13 +200,67 @@ func (m *MemoryStorage) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// Deep copy helpers (Requirement 4)
+func deepCopyScanJob(job *models.ScanJob) *models.ScanJob {
+	if job == nil {
+		return nil
+	}
+	cp := *job
+	if job.StartedAt != nil {
+		t := *job.StartedAt
+		cp.StartedAt = &t
+	}
+	if job.CompletedAt != nil {
+		t := *job.CompletedAt
+		cp.CompletedAt = &t
+	}
+	cp.Metadata = deepCopyMap(job.Metadata)
+	return &cp
+}
+
+func deepCopyMap(m map[string]interface{}) map[string]interface{} {
+	if m == nil {
+		return nil
+	}
+	res := make(map[string]interface{}, len(m))
+	for k, v := range m {
+		res[k] = deepCopyValue(v)
+	}
+	return res
+}
+
+func deepCopyValue(v interface{}) interface{} {
+	if v == nil {
+		return nil
+	}
+	switch val := v.(type) {
+	case map[string]interface{}:
+		return deepCopyMap(val)
+	case []interface{}:
+		res := make([]interface{}, len(val))
+		for i, elem := range val {
+			res[i] = deepCopyValue(elem)
+		}
+		return res
+	case []string:
+		res := make([]string, len(val))
+		copy(res, val)
+		return res
+	case []int:
+		res := make([]int, len(val))
+		copy(res, val)
+		return res
+	default:
+		return val
+	}
+}
+
 // Job Operations
 func (m *MemoryStorage) CreateJob(ctx context.Context, job *models.ScanJob) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	cp := *job
-	m.jobs[job.ID] = &cp
+	m.jobs[job.ID] = deepCopyScanJob(job)
 	return nil
 }
 
@@ -216,8 +272,7 @@ func (m *MemoryStorage) GetJobByID(ctx context.Context, id string) (*models.Scan
 	if !exists {
 		return nil, ErrNotFound
 	}
-	cp := *j
-	return &cp, nil
+	return deepCopyScanJob(j), nil
 }
 
 func (m *MemoryStorage) ListJobs(ctx context.Context, targetID string) ([]*models.ScanJob, error) {
@@ -227,23 +282,21 @@ func (m *MemoryStorage) ListJobs(ctx context.Context, targetID string) ([]*model
 	result := make([]*models.ScanJob, 0, len(m.jobs))
 	for _, j := range m.jobs {
 		if targetID == "" || j.TargetID == targetID {
-			cp := *j
-			result = append(result, &cp)
+			result = append(result, deepCopyScanJob(j))
 		}
 	}
+	// Deterministic sorting matching PostgreSQL (Requirement 3): created_at DESC, tie-breaker id DESC
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].CreatedAt.Equal(result[j].CreatedAt) {
+			return result[i].ID > result[j].ID
+		}
+		return result[i].CreatedAt.After(result[j].CreatedAt)
+	})
 	return result, nil
 }
 
 func (m *MemoryStorage) UpdateJob(ctx context.Context, job *models.ScanJob) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if _, exists := m.jobs[job.ID]; !exists {
-		return ErrNotFound
-	}
-	cp := *job
-	m.jobs[job.ID] = &cp
-	return nil
+	return m.TransitionJobWithAuditEvent(ctx, job, nil, nil)
 }
 
 func (m *MemoryStorage) DeleteJob(ctx context.Context, id string) error {
@@ -262,8 +315,7 @@ func (m *MemoryStorage) CreateJobWithAuditEvent(ctx context.Context, job *models
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	cp := *job
-	m.jobs[job.ID] = &cp
+	m.jobs[job.ID] = deepCopyScanJob(job)
 
 	if event != nil {
 		m.recordEventLocked(event)
@@ -273,14 +325,37 @@ func (m *MemoryStorage) CreateJobWithAuditEvent(ctx context.Context, job *models
 
 // UpdateJobWithAuditEvent updates a job and records an audit event atomically.
 func (m *MemoryStorage) UpdateJobWithAuditEvent(ctx context.Context, job *models.ScanJob, event *models.Event) error {
+	var expected []models.JobStatus
+	if event != nil && event.PreviousState != "" {
+		expected = []models.JobStatus{models.JobStatus(event.PreviousState)}
+	}
+	return m.TransitionJobWithAuditEvent(ctx, job, expected, event)
+}
+
+// TransitionJobWithAuditEvent atomically updates a job guarded by optimistic CAS (Requirement 1 & 2).
+func (m *MemoryStorage) TransitionJobWithAuditEvent(ctx context.Context, job *models.ScanJob, expectedOldStatus []models.JobStatus, event *models.Event) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, exists := m.jobs[job.ID]; !exists {
+	curr, exists := m.jobs[job.ID]
+	if !exists {
 		return ErrNotFound
 	}
-	cp := *job
-	m.jobs[job.ID] = &cp
+
+	if len(expectedOldStatus) > 0 {
+		matched := false
+		for _, s := range expectedOldStatus {
+			if curr.Status == s {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return fmt.Errorf("%w: job '%s' expected status in %v but found '%s'", ErrJobStateConflict, job.ID, expectedOldStatus, curr.Status)
+		}
+	}
+
+	m.jobs[job.ID] = deepCopyScanJob(job)
 
 	if event != nil {
 		m.recordEventLocked(event)
@@ -2405,11 +2480,15 @@ func (m *MemoryStorage) ConfirmScopeAndCreateTarget(
 	snapshotSum := sha256.Sum256([]byte(snapshotPayload))
 	snapshotHash := hex.EncodeToString(snapshotSum[:])
 
-	// Populate target fields
+	// Populate target fields with distinct semantics (Requirements 6 & 7)
 	targetCopy := *target
 	targetCopy.RootDomain = selectedRootDomain
+	targetCopy.PrimaryRootDomain = selectedRootDomain
 	targetCopy.ScopeImportID = rev.ID
-	targetCopy.CanonicalScopeHash = snapshotHash
+	targetCopy.CanonicalScopeSHA256 = rev.CanonicalScopeSHA256
+	targetCopy.CanonicalScopeHash = rev.CanonicalScopeSHA256
+	targetCopy.AuthorizationSnapshotSHA256 = snapshotHash
+	targetCopy.ConfirmedBy = confirmedBy
 	targetCopy.ConfirmationTimestamp = &now
 	targetCopy.CreatedAt = now
 	targetCopy.UpdatedAt = now

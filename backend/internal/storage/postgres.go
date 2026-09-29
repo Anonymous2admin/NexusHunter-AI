@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lib/pq"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/models"
 )
 
@@ -24,24 +25,37 @@ func NewPostgresStorage(db *sql.DB) *PostgresStorage {
 
 // Create inserts a new authorized target into PostgreSQL.
 func (p *PostgresStorage) Create(ctx context.Context, target *models.Target) error {
+	canonScopeSHA := target.CanonicalScopeSHA256
+	if canonScopeSHA == "" {
+		canonScopeSHA = target.CanonicalScopeHash
+	}
+	primaryRoot := target.PrimaryRootDomain
+	if primaryRoot == "" {
+		primaryRoot = target.RootDomain
+	}
+
 	query := `
 		INSERT INTO targets (
-			id, name, root_domain, allowed_domains, allowed_url_patterns, excluded_patterns, status,
-			scope_import_id, canonical_scope_hash, confirmation_timestamp,
+			id, name, root_domain, primary_root_domain, allowed_domains, allowed_url_patterns, excluded_patterns, status,
+			scope_import_id, canonical_scope_sha256, canonical_scope_hash, authorization_snapshot_sha256, confirmed_by, confirmation_timestamp,
 			created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 	`
 	_, err := p.db.ExecContext(ctx, query,
 		target.ID,
 		target.Name,
 		target.RootDomain,
+		primaryRoot,
 		strings.Join(target.AllowedDomains, ","),
 		strings.Join(target.AllowedURLPatterns, ","),
 		strings.Join(target.ExcludedPatterns, ","),
 		string(target.Status),
 		target.ScopeImportID,
-		target.CanonicalScopeHash,
+		canonScopeSHA,
+		canonScopeSHA,
+		target.AuthorizationSnapshotSHA256,
+		target.ConfirmedBy,
 		target.ConfirmationTimestamp,
 		target.CreatedAt,
 		target.UpdatedAt,
@@ -55,8 +69,9 @@ func (p *PostgresStorage) Create(ctx context.Context, target *models.Target) err
 // GetByID fetches a target by its ID.
 func (p *PostgresStorage) GetByID(ctx context.Context, id string) (*models.Target, error) {
 	query := `
-		SELECT id, name, root_domain, allowed_domains, allowed_url_patterns, excluded_patterns, status,
-		       COALESCE(scope_import_id, ''), COALESCE(canonical_scope_hash, ''), confirmation_timestamp,
+		SELECT id, name, root_domain, COALESCE(primary_root_domain, root_domain), allowed_domains, allowed_url_patterns, excluded_patterns, status,
+		       COALESCE(scope_import_id, ''), COALESCE(canonical_scope_sha256, canonical_scope_hash, ''),
+		       COALESCE(authorization_snapshot_sha256, ''), COALESCE(confirmed_by, ''), confirmation_timestamp,
 		       created_at, updated_at
 		FROM targets WHERE id = $1
 	`
@@ -66,8 +81,9 @@ func (p *PostgresStorage) GetByID(ctx context.Context, id string) (*models.Targe
 	var allowedDomainsStr, allowedURLsStr, excludedStr, statusStr string
 
 	err := row.Scan(
-		&t.ID, &t.Name, &t.RootDomain, &allowedDomainsStr, &allowedURLsStr, &excludedStr, &statusStr,
-		&t.ScopeImportID, &t.CanonicalScopeHash, &t.ConfirmationTimestamp,
+		&t.ID, &t.Name, &t.RootDomain, &t.PrimaryRootDomain, &allowedDomainsStr, &allowedURLsStr, &excludedStr, &statusStr,
+		&t.ScopeImportID, &t.CanonicalScopeSHA256,
+		&t.AuthorizationSnapshotSHA256, &t.ConfirmedBy, &t.ConfirmationTimestamp,
 		&t.CreatedAt, &t.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -76,6 +92,7 @@ func (p *PostgresStorage) GetByID(ctx context.Context, id string) (*models.Targe
 		return nil, fmt.Errorf("failed to query target: %w", err)
 	}
 
+	t.CanonicalScopeHash = t.CanonicalScopeSHA256
 	t.Status = models.TargetStatus(statusStr)
 	t.AllowedDomains = splitNonEmpty(allowedDomainsStr)
 	t.AllowedURLPatterns = splitNonEmpty(allowedURLsStr)
@@ -87,8 +104,9 @@ func (p *PostgresStorage) GetByID(ctx context.Context, id string) (*models.Targe
 // List returns all configured targets.
 func (p *PostgresStorage) List(ctx context.Context) ([]*models.Target, error) {
 	query := `
-		SELECT id, name, root_domain, allowed_domains, allowed_url_patterns, excluded_patterns, status,
-		       COALESCE(scope_import_id, ''), COALESCE(canonical_scope_hash, ''), confirmation_timestamp,
+		SELECT id, name, root_domain, COALESCE(primary_root_domain, root_domain), allowed_domains, allowed_url_patterns, excluded_patterns, status,
+		       COALESCE(scope_import_id, ''), COALESCE(canonical_scope_sha256, canonical_scope_hash, ''),
+		       COALESCE(authorization_snapshot_sha256, ''), COALESCE(confirmed_by, ''), confirmation_timestamp,
 		       created_at, updated_at
 		FROM targets ORDER BY created_at DESC
 	`
@@ -104,17 +122,22 @@ func (p *PostgresStorage) List(ctx context.Context) ([]*models.Target, error) {
 		var allowedDomainsStr, allowedURLsStr, excludedStr, statusStr string
 
 		if err := rows.Scan(
-			&t.ID, &t.Name, &t.RootDomain, &allowedDomainsStr, &allowedURLsStr, &excludedStr, &statusStr,
-			&t.ScopeImportID, &t.CanonicalScopeHash, &t.ConfirmationTimestamp,
+			&t.ID, &t.Name, &t.RootDomain, &t.PrimaryRootDomain, &allowedDomainsStr, &allowedURLsStr, &excludedStr, &statusStr,
+			&t.ScopeImportID, &t.CanonicalScopeSHA256,
+			&t.AuthorizationSnapshotSHA256, &t.ConfirmedBy, &t.ConfirmationTimestamp,
 			&t.CreatedAt, &t.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
+		t.CanonicalScopeHash = t.CanonicalScopeSHA256
 		t.Status = models.TargetStatus(statusStr)
 		t.AllowedDomains = splitNonEmpty(allowedDomainsStr)
 		t.AllowedURLPatterns = splitNonEmpty(allowedURLsStr)
 		t.ExcludedPatterns = splitNonEmpty(excludedStr)
 		targets = append(targets, &t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during targets iteration: %w", err)
 	}
 	return targets, nil
 }
@@ -265,7 +288,7 @@ func (p *PostgresStorage) ListJobs(ctx context.Context, targetID string) ([]*mod
 		SELECT id, target_id, type, status, created_at, started_at, completed_at, error, metadata
 		FROM scan_jobs
 		WHERE ($1 = '' OR target_id = $1)
-		ORDER BY created_at DESC
+		ORDER BY created_at DESC, id DESC
 	`
 	rows, err := p.db.QueryContext(ctx, query, targetID)
 	if err != nil {
@@ -292,77 +315,91 @@ func (p *PostgresStorage) ListJobs(ctx context.Context, targetID string) ([]*mod
 		}
 		result = append(result, &j)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during scan jobs iteration: %w", err)
+	}
 	return result, nil
 }
 
-// UpdateJob updates an existing scan job state and timestamps in PostgreSQL.
-func (p *PostgresStorage) UpdateJob(ctx context.Context, job *models.ScanJob) error {
+// TransitionJobWithAuditEvent atomically updates a job's status guarded by an optimistic CAS check on expectedOldStatus,
+// and inserts a durable audit event in the same transaction (Requirement 1 & 2).
+func (p *PostgresStorage) TransitionJobWithAuditEvent(ctx context.Context, job *models.ScanJob, expectedOldStatus []models.JobStatus, event *models.Event) error {
 	metaJSON, err := json.Marshal(job.Metadata)
 	if err != nil {
 		return fmt.Errorf("failed to marshal job metadata: %w", err)
 	}
 
-	query := `
-		UPDATE scan_jobs
-		SET status = $2, started_at = $3, completed_at = $4, error = $5, metadata = $6
-		WHERE id = $1
-	`
-	res, err := p.db.ExecContext(ctx, query,
-		job.ID,
-		string(job.Status),
-		job.StartedAt,
-		job.CompletedAt,
-		job.Error,
-		string(metaJSON),
-	)
-	if err != nil {
-		return err
-	}
-	rows, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rows == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
-// UpdateJobWithAuditEvent updates a job state and records an audit event atomically in a transaction.
-func (p *PostgresStorage) UpdateJobWithAuditEvent(ctx context.Context, job *models.ScanJob, event *models.Event) error {
-	metaJSON, err := json.Marshal(job.Metadata)
-	if err != nil {
-		return fmt.Errorf("failed to marshal job metadata: %w", err)
-	}
-
-	tx, err := p.db.BeginTx(ctx, nil)
+	tx, err := p.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	query := `
-		UPDATE scan_jobs
-		SET status = $2, started_at = $3, completed_at = $4, error = $5, metadata = $6
-		WHERE id = $1
-	`
-	res, err := tx.ExecContext(ctx, query,
-		job.ID,
-		string(job.Status),
-		job.StartedAt,
-		job.CompletedAt,
-		job.Error,
-		string(metaJSON),
-	)
+	var res sql.Result
+	if len(expectedOldStatus) == 1 {
+		query := `
+			UPDATE scan_jobs
+			SET status = $2, started_at = $3, completed_at = $4, error = $5, metadata = $6
+			WHERE id = $1 AND status = $7;
+		`
+		res, err = tx.ExecContext(ctx, query,
+			job.ID,
+			string(job.Status),
+			job.StartedAt,
+			job.CompletedAt,
+			job.Error,
+			string(metaJSON),
+			string(expectedOldStatus[0]),
+		)
+	} else if len(expectedOldStatus) > 1 {
+		statusStrings := make([]string, len(expectedOldStatus))
+		for i, s := range expectedOldStatus {
+			statusStrings[i] = string(s)
+		}
+		query := `
+			UPDATE scan_jobs
+			SET status = $2, started_at = $3, completed_at = $4, error = $5, metadata = $6
+			WHERE id = $1 AND status = ANY($7::text[]);
+		`
+		res, err = tx.ExecContext(ctx, query,
+			job.ID,
+			string(job.Status),
+			job.StartedAt,
+			job.CompletedAt,
+			job.Error,
+			string(metaJSON),
+			pq.Array(statusStrings),
+		)
+	} else {
+		query := `
+			UPDATE scan_jobs
+			SET status = $2, started_at = $3, completed_at = $4, error = $5, metadata = $6
+			WHERE id = $1;
+		`
+		res, err = tx.ExecContext(ctx, query,
+			job.ID,
+			string(job.Status),
+			job.StartedAt,
+			job.CompletedAt,
+			job.Error,
+			string(metaJSON),
+		)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to update scan job: %w", err)
 	}
+
 	rows, err := res.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("failed to check rows affected: %w", err)
 	}
 	if rows == 0 {
-		return ErrNotFound
+		var currStatus string
+		checkErr := tx.QueryRowContext(ctx, "SELECT status FROM scan_jobs WHERE id = $1", job.ID).Scan(&currStatus)
+		if errors.Is(checkErr, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("%w: job '%s' expected status in %v but found '%s'", ErrJobStateConflict, job.ID, expectedOldStatus, currStatus)
 	}
 
 	if event != nil {
@@ -372,6 +409,20 @@ func (p *PostgresStorage) UpdateJobWithAuditEvent(ctx context.Context, job *mode
 	}
 
 	return tx.Commit()
+}
+
+// UpdateJob updates an existing scan job state and timestamps in PostgreSQL.
+func (p *PostgresStorage) UpdateJob(ctx context.Context, job *models.ScanJob) error {
+	return p.TransitionJobWithAuditEvent(ctx, job, nil, nil)
+}
+
+// UpdateJobWithAuditEvent updates a job state and records an audit event atomically in a transaction.
+func (p *PostgresStorage) UpdateJobWithAuditEvent(ctx context.Context, job *models.ScanJob, event *models.Event) error {
+	var expected []models.JobStatus
+	if event != nil && event.PreviousState != "" {
+		expected = []models.JobStatus{models.JobStatus(event.PreviousState)}
+	}
+	return p.TransitionJobWithAuditEvent(ctx, job, expected, event)
 }
 
 // DeleteJob removes a scan job by its ID from PostgreSQL.
@@ -550,6 +601,9 @@ func (p *PostgresStorage) ListRecent(ctx context.Context, limit int) ([]*models.
 		}
 		events = append(events, &e)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during recent events iteration: %w", err)
+	}
 	return events, nil
 }
 
@@ -587,6 +641,9 @@ func (p *PostgresStorage) ListByTarget(ctx context.Context, targetID string) ([]
 			}
 		}
 		events = append(events, &e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during target events iteration: %w", err)
 	}
 	return events, nil
 }
@@ -626,6 +683,9 @@ func (p *PostgresStorage) ListByJob(ctx context.Context, jobID string) ([]*model
 		}
 		events = append(events, &e)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during job events iteration: %w", err)
+	}
 	return events, nil
 }
 
@@ -663,6 +723,9 @@ func (p *PostgresStorage) GetByCorrelationID(ctx context.Context, correlationID 
 			}
 		}
 		events = append(events, &e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during correlation events iteration: %w", err)
 	}
 	return events, nil
 }
@@ -730,6 +793,9 @@ func (p *PostgresStorage) ListAssets(ctx context.Context, targetID string) ([]*m
 		}
 		result = append(result, &a)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during assets iteration: %w", err)
+	}
 	return result, nil
 }
 
@@ -769,6 +835,9 @@ func (p *PostgresStorage) ListDNSRecords(ctx context.Context, assetID string) ([
 			return nil, err
 		}
 		result = append(result, &r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during dns records iteration: %w", err)
 	}
 	return result, nil
 }
@@ -811,6 +880,9 @@ func (p *PostgresStorage) ListHTTPServices(ctx context.Context, targetID string)
 		s.TLSVersion = tv.String
 		result = append(result, &s)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during http services iteration: %w", err)
+	}
 	return result, nil
 }
 
@@ -846,6 +918,9 @@ func (p *PostgresStorage) ListURLs(ctx context.Context, targetID string) ([]*mod
 			return nil, err
 		}
 		result = append(result, &u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during urls iteration: %w", err)
 	}
 	return result, nil
 }
@@ -986,6 +1061,9 @@ func (p *PostgresStorage) ListTechnologyObservations(ctx context.Context, filter
 		o.Confidence = models.ConfidenceLevel(conf)
 		results = append(results, &o)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error during technology observations iteration: %w", err)
+	}
 	return results, total, nil
 }
 
@@ -1086,12 +1164,13 @@ func (p *PostgresStorage) ListServiceObservations(ctx context.Context, filter mo
 		if tlsVer.Valid {
 			s.TLSVersion = tlsVer.String
 		}
-		if len(headersRaw) > 0 {
-			var h map[string]string
-			_ = json.Unmarshal(headersRaw, &h)
-			s.Headers = h
+		if err := safeUnmarshal(headersRaw, &s.Headers, "service_observation.headers"); err != nil {
+			return nil, 0, err
 		}
 		results = append(results, &s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error during service observations iteration: %w", err)
 	}
 	return results, total, nil
 }
@@ -1146,6 +1225,9 @@ func (p *PostgresStorage) ListSecurityObservations(ctx context.Context, targetID
 		}
 		results = append(results, &o)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during security observations iteration: %w", err)
+	}
 	return results, nil
 }
 
@@ -1188,6 +1270,9 @@ func (p *PostgresStorage) ListAssetTags(ctx context.Context, assetID string) ([]
 		}
 		results = append(results, &t)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during asset tags iteration: %w", err)
+	}
 	return results, nil
 }
 
@@ -1206,6 +1291,9 @@ func (p *PostgresStorage) ListTagsForTarget(ctx context.Context, targetID string
 			return nil, err
 		}
 		results = append(results, &t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during target asset tags iteration: %w", err)
 	}
 	return results, nil
 }
@@ -1285,13 +1373,16 @@ func (p *PostgresStorage) ListAssetChanges(ctx context.Context, filter models.Ch
 			return nil, 0, err
 		}
 		c.ChangeType = models.AssetChangeType(ct)
-		if len(prevRaw) > 0 {
-			_ = json.Unmarshal(prevRaw, &c.PreviousState)
+		if err := safeUnmarshal(prevRaw, &c.PreviousState, "asset_change.previous_state"); err != nil {
+			return nil, 0, err
 		}
-		if len(currRaw) > 0 {
-			_ = json.Unmarshal(currRaw, &c.CurrentState)
+		if err := safeUnmarshal(currRaw, &c.CurrentState, "asset_change.current_state"); err != nil {
+			return nil, 0, err
 		}
 		results = append(results, &c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error during asset changes iteration: %w", err)
 	}
 	return results, total, nil
 }
@@ -1322,6 +1413,9 @@ func (p *PostgresStorage) ListPageAssets(ctx context.Context, assetID string) ([
 			return nil, err
 		}
 		results = append(results, &a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during page assets iteration: %w", err)
 	}
 	return results, nil
 }
@@ -1519,6 +1613,9 @@ func (p *PostgresStorage) ListAssetsFiltered(ctx context.Context, filter models.
 		}
 		results = append(results, &a)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error during assets list iteration: %w", err)
+	}
 	return results, total, nil
 }
 
@@ -1604,6 +1701,9 @@ func (p *PostgresStorage) ListAnalysisRuns(ctx context.Context, targetID string)
 		r.Status = models.AnalysisRunStatus(statusStr)
 		results = append(results, &r)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during analysis runs iteration: %w", err)
+	}
 	return results, nil
 }
 
@@ -1656,10 +1756,13 @@ func (p *PostgresStorage) ListSecuritySignals(ctx context.Context, targetID, ass
 		if err != nil {
 			return nil, err
 		}
-		if len(detailsJSON) > 0 {
-			_ = json.Unmarshal(detailsJSON, &s.Details)
+		if err := safeUnmarshal(detailsJSON, &s.Details, "security_signal.details"); err != nil {
+			return nil, err
 		}
 		results = append(results, &s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during security signals iteration: %w", err)
 	}
 	return results, nil
 }
@@ -1819,13 +1922,16 @@ func (p *PostgresStorage) ListFindingCandidates(ctx context.Context, filter mode
 			return nil, 0, err
 		}
 		c.State = models.CandidateState(stateStr)
-		if len(validStepsJSON) > 0 {
-			_ = json.Unmarshal(validStepsJSON, &c.ValidationSteps)
+		if err := safeUnmarshal(validStepsJSON, &c.ValidationSteps, "finding_candidate.validation_steps"); err != nil {
+			return nil, 0, err
 		}
-		if len(eviRefsJSON) > 0 {
-			_ = json.Unmarshal(eviRefsJSON, &c.EvidenceReferences)
+		if err := safeUnmarshal(eviRefsJSON, &c.EvidenceReferences, "finding_candidate.evidence_references"); err != nil {
+			return nil, 0, err
 		}
 		results = append(results, &c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error during finding candidates iteration: %w", err)
 	}
 
 	return results, total, nil
@@ -1898,10 +2004,13 @@ func (p *PostgresStorage) ListCandidateEvidence(ctx context.Context, candidateID
 		if err != nil {
 			return nil, err
 		}
-		if len(detailsJSON) > 0 {
-			_ = json.Unmarshal(detailsJSON, &e.Details)
+		if err := safeUnmarshal(detailsJSON, &e.Details, "candidate_evidence.details"); err != nil {
+			return nil, err
 		}
 		results = append(results, &e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during candidate evidence iteration: %w", err)
 	}
 	return results, nil
 }

@@ -99,9 +99,15 @@ func (p *PostgresStorage) GetReasoningSignal(ctx context.Context, id string) (*m
 		return nil, err
 	}
 
-	_ = json.Unmarshal(obsJSON, &sig.SourceObservations)
-	_ = json.Unmarshal(evJSON, &sig.SourceEvidence)
-	_ = json.Unmarshal(metaJSON, &sig.Metadata)
+	if err := safeUnmarshal(obsJSON, &sig.SourceObservations, "reasoning_signal.source_observations"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(evJSON, &sig.SourceEvidence, "reasoning_signal.source_evidence"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(metaJSON, &sig.Metadata, "reasoning_signal.metadata"); err != nil {
+		return nil, err
+	}
 
 	return &sig, nil
 }
@@ -148,9 +154,15 @@ func (p *PostgresStorage) ListReasoningSignals(ctx context.Context, targetID, as
 		); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(obsJSON, &sig.SourceObservations)
-		_ = json.Unmarshal(evJSON, &sig.SourceEvidence)
-		_ = json.Unmarshal(metaJSON, &sig.Metadata)
+		if err := safeUnmarshal(obsJSON, &sig.SourceObservations, "reasoning_signal.source_observations"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(evJSON, &sig.SourceEvidence, "reasoning_signal.source_evidence"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(metaJSON, &sig.Metadata, "reasoning_signal.metadata"); err != nil {
+			return nil, err
+		}
 		res = append(res, &sig)
 	}
 	return res, rows.Err()
@@ -234,8 +246,12 @@ func (p *PostgresStorage) GetHypothesisGroup(ctx context.Context, id string) (*m
 		return nil, err
 	}
 
-	_ = json.Unmarshal(sigJSON, &grp.Signals)
-	_ = json.Unmarshal(hypoJSON, &grp.HypothesisIDs)
+	if err := safeUnmarshal(sigJSON, &grp.Signals, "hypothesis_group.signals"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(hypoJSON, &grp.HypothesisIDs, "hypothesis_group.hypothesis_ids"); err != nil {
+		return nil, err
+	}
 
 	// Fetch hypotheses belonging to group
 	hypos, _ := p.ListHypothesesByGroup(ctx, grp.ID)
@@ -279,8 +295,12 @@ func (p *PostgresStorage) ListHypothesisGroups(ctx context.Context, targetID str
 		); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(sigJSON, &grp.Signals)
-		_ = json.Unmarshal(hypoJSON, &grp.HypothesisIDs)
+		if err := safeUnmarshal(sigJSON, &grp.Signals, "hypothesis_group.signals"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(hypoJSON, &grp.HypothesisIDs, "hypothesis_group.hypothesis_ids"); err != nil {
+			return nil, err
+		}
 
 		hypos, _ := p.ListHypothesesByGroup(ctx, grp.ID)
 		for _, h := range hypos {
@@ -400,12 +420,24 @@ func (p *PostgresStorage) GetHypothesis(ctx context.Context, id string) (*models
 		return nil, err
 	}
 
-	_ = json.Unmarshal(sigJSON, &hyp.SupportingSignals)
-	_ = json.Unmarshal(supEvJSON, &hyp.SupportingEvidence)
-	_ = json.Unmarshal(conEvJSON, &hyp.ContradictingEvidence)
-	_ = json.Unmarshal(altJSON, &hyp.AlternativeHypotheses)
-	_ = json.Unmarshal(recJSON, &hyp.RecommendedInvestigations)
-	_ = json.Unmarshal(breakdownJSON, &hyp.PriorityBreakdown)
+	if err := safeUnmarshal(sigJSON, &hyp.SupportingSignals, "hypothesis.supporting_signals"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(supEvJSON, &hyp.SupportingEvidence, "hypothesis.supporting_evidence"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(conEvJSON, &hyp.ContradictingEvidence, "hypothesis.contradicting_evidence"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(altJSON, &hyp.AlternativeHypotheses, "hypothesis.alternative_hypotheses"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(recJSON, &hyp.RecommendedInvestigations, "hypothesis.recommended_investigations"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(breakdownJSON, &hyp.PriorityBreakdown, "hypothesis.priority_breakdown"); err != nil {
+		return nil, err
+	}
 
 	fals, _ := p.ListFalsificationConditions(ctx, hyp.ID)
 	for _, f := range fals {
@@ -469,12 +501,24 @@ func (p *PostgresStorage) ListHypotheses(ctx context.Context, targetID string) (
 			return nil, err
 		}
 
-		_ = json.Unmarshal(sigJSON, &hyp.SupportingSignals)
-		_ = json.Unmarshal(supEvJSON, &hyp.SupportingEvidence)
-		_ = json.Unmarshal(conEvJSON, &hyp.ContradictingEvidence)
-		_ = json.Unmarshal(altJSON, &hyp.AlternativeHypotheses)
-		_ = json.Unmarshal(recJSON, &hyp.RecommendedInvestigations)
-		_ = json.Unmarshal(breakdownJSON, &hyp.PriorityBreakdown)
+		if err := safeUnmarshal(sigJSON, &hyp.SupportingSignals, "hypothesis.supporting_signals"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(supEvJSON, &hyp.SupportingEvidence, "hypothesis.supporting_evidence"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(conEvJSON, &hyp.ContradictingEvidence, "hypothesis.contradicting_evidence"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(altJSON, &hyp.AlternativeHypotheses, "hypothesis.alternative_hypotheses"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(recJSON, &hyp.RecommendedInvestigations, "hypothesis.recommended_investigations"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(breakdownJSON, &hyp.PriorityBreakdown, "hypothesis.priority_breakdown"); err != nil {
+			return nil, err
+		}
 
 		fals, _ := p.ListFalsificationConditions(ctx, hyp.ID)
 		for _, f := range fals {
@@ -539,12 +583,24 @@ func (p *PostgresStorage) ListHypothesesByGroup(ctx context.Context, groupID str
 			return nil, err
 		}
 
-		_ = json.Unmarshal(sigJSON, &hyp.SupportingSignals)
-		_ = json.Unmarshal(supEvJSON, &hyp.SupportingEvidence)
-		_ = json.Unmarshal(conEvJSON, &hyp.ContradictingEvidence)
-		_ = json.Unmarshal(altJSON, &hyp.AlternativeHypotheses)
-		_ = json.Unmarshal(recJSON, &hyp.RecommendedInvestigations)
-		_ = json.Unmarshal(breakdownJSON, &hyp.PriorityBreakdown)
+		if err := safeUnmarshal(sigJSON, &hyp.SupportingSignals, "hypothesis.supporting_signals"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(supEvJSON, &hyp.SupportingEvidence, "hypothesis.supporting_evidence"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(conEvJSON, &hyp.ContradictingEvidence, "hypothesis.contradicting_evidence"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(altJSON, &hyp.AlternativeHypotheses, "hypothesis.alternative_hypotheses"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(recJSON, &hyp.RecommendedInvestigations, "hypothesis.recommended_investigations"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(breakdownJSON, &hyp.PriorityBreakdown, "hypothesis.priority_breakdown"); err != nil {
+			return nil, err
+		}
 
 		res = append(res, &hyp)
 	}
@@ -632,7 +688,9 @@ func (p *PostgresStorage) ListFalsificationConditions(ctx context.Context, hypot
 		); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(refsJSON, &cond.EvidenceRefs)
+		if err := safeUnmarshal(refsJSON, &cond.EvidenceRefs, "falsification_condition.evidence_refs"); err != nil {
+			return nil, err
+		}
 		res = append(res, &cond)
 	}
 	return res, rows.Err()
@@ -789,9 +847,15 @@ func (p *PostgresStorage) GetInvestigation(ctx context.Context, id string) (*mod
 		return nil, err
 	}
 
-	_ = json.Unmarshal(factorsJSON, &inv.PriorityFactors)
-	_ = json.Unmarshal(stepsJSON, &inv.Steps)
-	_ = json.Unmarshal(evJSON, &inv.GeneratedEvidence)
+	if err := safeUnmarshal(factorsJSON, &inv.PriorityFactors, "investigation.priority_factors"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(stepsJSON, &inv.Steps, "investigation.steps"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(evJSON, &inv.GeneratedEvidence, "investigation.generated_evidence"); err != nil {
+		return nil, err
+	}
 
 	return &inv, nil
 }
@@ -841,9 +905,15 @@ func (p *PostgresStorage) ListInvestigations(ctx context.Context, targetID strin
 			return nil, err
 		}
 
-		_ = json.Unmarshal(factorsJSON, &inv.PriorityFactors)
-		_ = json.Unmarshal(stepsJSON, &inv.Steps)
-		_ = json.Unmarshal(evJSON, &inv.GeneratedEvidence)
+		if err := safeUnmarshal(factorsJSON, &inv.PriorityFactors, "investigation.priority_factors"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(stepsJSON, &inv.Steps, "investigation.steps"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(evJSON, &inv.GeneratedEvidence, "investigation.generated_evidence"); err != nil {
+			return nil, err
+		}
 
 		res = append(res, &inv)
 	}
@@ -922,7 +992,9 @@ func (p *PostgresStorage) ListTrustBoundaries(ctx context.Context, targetID, ass
 		); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(refsJSON, &tb.EvidenceRefs)
+		if err := safeUnmarshal(refsJSON, &tb.EvidenceRefs, "trust_boundary.evidence_refs"); err != nil {
+			return nil, err
+		}
 		res = append(res, &tb)
 	}
 	return res, rows.Err()
@@ -985,7 +1057,9 @@ func (p *PostgresStorage) ListAuthContexts(ctx context.Context, targetID string)
 		); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(headersJSON, &ac.Headers)
+		if err := safeUnmarshal(headersJSON, &ac.Headers, "auth_context.headers"); err != nil {
+			return nil, err
+		}
 		res = append(res, &ac)
 	}
 	return res, rows.Err()
@@ -1053,7 +1127,9 @@ func (p *PostgresStorage) ListPermissionMatrix(ctx context.Context, targetID, as
 		); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(refsJSON, &entry.EvidenceRefs)
+		if err := safeUnmarshal(refsJSON, &entry.EvidenceRefs, "permission_matrix.evidence_refs"); err != nil {
+			return nil, err
+		}
 		res = append(res, &entry)
 	}
 	return res, rows.Err()
@@ -1124,7 +1200,9 @@ func (p *PostgresStorage) ListSecurityControls(ctx context.Context, targetID, as
 		); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(refsJSON, &sc.EvidenceRefs)
+		if err := safeUnmarshal(refsJSON, &sc.EvidenceRefs, "security_control.evidence_refs"); err != nil {
+			return nil, err
+		}
 		res = append(res, &sc)
 	}
 	return res, rows.Err()

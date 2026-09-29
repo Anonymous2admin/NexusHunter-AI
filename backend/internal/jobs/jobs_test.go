@@ -277,3 +277,267 @@ func TestTargetValidation(t *testing.T) {
 		t.Fatalf("expected ErrTargetNotActive, got %v", err)
 	}
 }
+
+// TestMultiProcessJobStateCAS simulates two distinct Manager instances against the same repository (Requirement 1)
+func TestMultiProcessJobStateCAS(t *testing.T) {
+	ctx := context.Background()
+	sharedRepo := NewMemoryJobRepository()
+	bus1 := events.NewMemoryEventBus(50)
+	bus2 := events.NewMemoryEventBus(50)
+
+	mgr1 := NewManager(bus1, sharedRepo)
+	mgr2 := NewManager(bus2, sharedRepo)
+
+	checker := &mockTargetChecker{
+		targets: map[string]*models.Target{
+			"target-active": {ID: "target-active", Status: models.TargetStatusActive},
+		},
+	}
+	mgr1.SetTargetChecker(checker)
+	mgr2.SetTargetChecker(checker)
+
+	job, err := mgr1.CreateJob(ctx, "target-active", "PORT_SCAN", map[string]interface{}{"initial": "val"})
+	if err != nil {
+		t.Fatalf("failed to create job: %v", err)
+	}
+
+	// Now both managers attempt to complete or start with concurrent CAS
+	// Simulate manager 1 starting the job successfully
+	_, err = mgr1.StartJob(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("manager 1 failed to start job: %v", err)
+	}
+
+	// Manager 2 directly attempting an invalid transition from old QUEUED state via CAS
+	oldJobCopy := *job
+	oldJobCopy.Status = models.JobStatusRunning
+	casErr := sharedRepo.TransitionJobWithAuditEvent(ctx, &oldJobCopy, []models.JobStatus{models.JobStatusQueued}, nil)
+	if casErr == nil {
+		t.Fatalf("expected CAS conflict when job is already RUNNING, got nil")
+	}
+	if !errors.Is(casErr, ErrJobStateConflict) {
+		t.Fatalf("expected ErrJobStateConflict, got %v", casErr)
+	}
+
+	// Concurrent completion between manager 1 and manager 2:
+	// Only one valid transition can succeed from RUNNING -> COMPLETED
+	var wg sync.WaitGroup
+	var completedCount int
+	var conflictCount int
+	var mu sync.Mutex
+
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		mgr := mgr1
+		if i == 1 {
+			mgr = mgr2
+		}
+		go func(m *Manager) {
+			defer wg.Done()
+			_, cErr := m.CompleteJob(ctx, job.ID)
+			mu.Lock()
+			defer mu.Unlock()
+			if cErr == nil {
+				completedCount++
+			} else if errors.Is(cErr, ErrJobStateConflict) {
+				conflictCount++
+			}
+		}(mgr)
+	}
+	wg.Wait()
+
+	finalJob, err := sharedRepo.GetJobByID(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("failed to get final job: %v", err)
+	}
+	if finalJob.Status != models.JobStatusCompleted {
+		t.Fatalf("expected final status COMPLETED, got %s", finalJob.Status)
+	}
+}
+
+// TestMemoryMetadataDeepCopy verifies that mutating metadata outside repository never mutates internal state (Requirement 4)
+func TestMemoryMetadataDeepCopy(t *testing.T) {
+	ctx := context.Background()
+	mgr, _, _ := setupTestManager()
+
+	initialMeta := map[string]interface{}{
+		"tags": []interface{}{"alpha", "beta"},
+		"config": map[string]interface{}{
+			"concurrency": 5,
+		},
+	}
+
+	job, err := mgr.CreateJob(ctx, "target-active", "DEEP_COPY_TEST", initialMeta)
+	if err != nil {
+		t.Fatalf("failed to create job: %v", err)
+	}
+
+	// Mutate original caller map
+	initialMeta["mutated"] = true
+	initialMeta["config"].(map[string]interface{})["concurrency"] = 999
+	initialMeta["tags"].([]interface{})[0] = "corrupted"
+
+	// Fetch from repo and verify it is untainted
+	fetched, err := mgr.GetJob(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("failed to fetch job: %v", err)
+	}
+
+	if _, exists := fetched.Metadata["mutated"]; exists {
+		t.Fatalf("deep copy leak: 'mutated' key found in repository metadata")
+	}
+	cfg := fetched.Metadata["config"].(map[string]interface{})
+	if cfg["concurrency"] != 5 {
+		t.Fatalf("deep copy leak: nested map concurrency altered to %v", cfg["concurrency"])
+	}
+	tags := fetched.Metadata["tags"].([]interface{})
+	if tags[0] != "alpha" {
+		t.Fatalf("deep copy leak: nested slice tags altered to %v", tags[0])
+	}
+
+	// Mutate fetched job metadata
+	fetched.Metadata["external_change"] = "leak"
+
+	// Fetch again and verify still untainted
+	fetchedAgain, _ := mgr.GetJob(ctx, job.ID)
+	if _, exists := fetchedAgain.Metadata["external_change"]; exists {
+		t.Fatalf("deep copy leak: GetJob returned mutable reference")
+	}
+}
+
+// TestMemoryRepositoryParityOrdering tests deterministic sorting: created_at DESC, tie-breaker id DESC (Requirement 3)
+func TestMemoryRepositoryParityOrdering(t *testing.T) {
+	ctx := context.Background()
+	repo := NewMemoryJobRepository()
+
+	baseTime := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	j1 := &models.ScanJob{ID: "job-001", TargetID: "t1", CreatedAt: baseTime.Add(1 * time.Minute)}
+	j2 := &models.ScanJob{ID: "job-002", TargetID: "t1", CreatedAt: baseTime.Add(2 * time.Minute)}
+	// Same timestamp to test tie-breaker ID DESC
+	j3 := &models.ScanJob{ID: "job-003", TargetID: "t1", CreatedAt: baseTime.Add(3 * time.Minute)}
+	j4 := &models.ScanJob{ID: "job-004", TargetID: "t1", CreatedAt: baseTime.Add(3 * time.Minute)}
+
+	_ = repo.CreateJob(ctx, j1)
+	_ = repo.CreateJob(ctx, j2)
+	_ = repo.CreateJob(ctx, j3)
+	_ = repo.CreateJob(ctx, j4)
+
+	list, err := repo.ListJobs(ctx, "t1")
+	if err != nil {
+		t.Fatalf("failed to list jobs: %v", err)
+	}
+
+	if len(list) != 4 {
+		t.Fatalf("expected 4 jobs, got %d", len(list))
+	}
+
+	// Expected order: job-004 (3m, id:4), job-003 (3m, id:3), job-002 (2m), job-001 (1m)
+	expectedIDs := []string{"job-004", "job-003", "job-002", "job-001"}
+	for i, exp := range expectedIDs {
+		if list[i].ID != exp {
+			t.Fatalf("ordering mismatch at index %d: expected %s, got %s", i, exp, list[i].ID)
+		}
+	}
+}
+
+// TestEventReplayReconstructJobLifecycle tests event replay state machine reconstruction (Requirement 17)
+func TestEventReplayReconstructJobLifecycle(t *testing.T) {
+	now := time.Now().UTC()
+	jobID := "job-replay-001"
+	targetID := "target-replay"
+
+	eventsList := []*models.Event{
+		{
+			EventID:       "evt-1",
+			EventType:     models.EventJobCreated,
+			JobID:         jobID,
+			TargetID:      targetID,
+			Timestamp:     now.Add(1 * time.Second),
+			PreviousState: "",
+			NewState:      string(models.JobStatusQueued),
+		},
+		{
+			EventID:       "evt-2",
+			EventType:     models.EventJobStarted,
+			JobID:         jobID,
+			TargetID:      targetID,
+			Timestamp:     now.Add(2 * time.Second),
+			PreviousState: string(models.JobStatusQueued),
+			NewState:      string(models.JobStatusRunning),
+		},
+		{
+			EventID:       "evt-3",
+			EventType:     models.EventJobCompleted,
+			JobID:         jobID,
+			TargetID:      targetID,
+			Timestamp:     now.Add(3 * time.Second),
+			PreviousState: string(models.JobStatusRunning),
+			NewState:      string(models.JobStatusCompleted),
+		},
+	}
+
+	status, err := ReconstructJobLifecycle(eventsList)
+	if err != nil {
+		t.Fatalf("failed to reconstruct lifecycle: %v", err)
+	}
+	if status != models.JobStatusCompleted {
+		t.Fatalf("expected reconstructed status COMPLETED, got %s", status)
+	}
+
+	// Test corruption/tampering detection: missing transition
+	tampered := []*models.Event{
+		eventsList[0], // CREATED
+		eventsList[2], // COMPLETED (skipping STARTED)
+	}
+	_, err = ReconstructJobLifecycle(tampered)
+	if err == nil {
+		t.Fatalf("expected integrity error when reconstructing from skipped state transition")
+	}
+}
+
+// TestConcurrentMetadataRaceDetector executes parallel reads and writes to verify -race clean execution (Requirement 4 & 26)
+func TestConcurrentMetadataRaceDetector(t *testing.T) {
+	ctx := context.Background()
+	mgr, _, _ := setupTestManager()
+
+	job, _ := mgr.CreateJob(ctx, "target-active", "RACE_TEST", map[string]interface{}{"counter": 0})
+
+	const goroutines = 20
+	var wg sync.WaitGroup
+
+	for i := 0; i < goroutines; i++ {
+		wg.Add(2)
+		// Reader goroutine
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				jObj, err := mgr.GetJob(ctx, job.ID)
+				if err == nil && jObj.Metadata != nil {
+					_ = jObj.Metadata["counter"]
+				}
+			}
+		}()
+
+		// Updater goroutine
+		go func(workerID int) {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				updatedMeta := map[string]interface{}{
+					"counter":   j,
+					"worker_id": workerID,
+				}
+				_ = mgr.repo.UpdateJob(ctx, &models.ScanJob{
+					ID:        job.ID,
+					TargetID:  job.TargetID,
+					Type:      job.Type,
+					Status:    models.JobStatusQueued,
+					CreatedAt: job.CreatedAt,
+					Metadata:  updatedMeta,
+				})
+			}
+		}(i)
+	}
+
+	wg.Wait()
+}

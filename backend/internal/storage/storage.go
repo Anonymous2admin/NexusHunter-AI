@@ -8,9 +8,10 @@ import (
 )
 
 var (
-	ErrNotFound     = errors.New("record not found")
-	ErrConflict     = errors.New("record already exists")
-	ErrInvalidState = errors.New("invalid state transition or record already confirmed")
+	ErrNotFound         = errors.New("record not found")
+	ErrConflict         = errors.New("record already exists")
+	ErrInvalidState     = errors.New("invalid state transition or record already confirmed")
+	ErrJobStateConflict = errors.New("job state transition conflict")
 )
 
 // TargetRepository specifies storage operations for authorized research targets.
@@ -30,6 +31,7 @@ type JobRepository interface {
 	ListJobs(ctx context.Context, targetID string) ([]*models.ScanJob, error)
 	UpdateJob(ctx context.Context, job *models.ScanJob) error
 	UpdateJobWithAuditEvent(ctx context.Context, job *models.ScanJob, event *models.Event) error
+	TransitionJobWithAuditEvent(ctx context.Context, job *models.ScanJob, expectedOldStatus []models.JobStatus, event *models.Event) error
 	DeleteJob(ctx context.Context, id string) error
 }
 

@@ -26,20 +26,24 @@ const (
 
 // Target defines an authorized security research target with explicit boundaries.
 type Target struct {
-	ID                 string               `json:"id"`
-	Name               string               `json:"name"`
-	RootDomain         string               `json:"root_domain"`
-	AllowedDomains     []string             `json:"allowed_domains"`
-	AllowedURLPatterns []string             `json:"allowed_url_patterns"`
-	ExcludedPatterns   []string             `json:"excluded_patterns"`
-	ScopeConfig           *AdvancedScopeConfig `json:"scope_config,omitempty"`
-	RawScopeJSON          string               `json:"raw_scope_json,omitempty"`
-	ScopeImportID         string               `json:"scope_import_id,omitempty"`
-	CanonicalScopeHash    string               `json:"canonical_scope_hash,omitempty"`
-	ConfirmationTimestamp *time.Time           `json:"confirmation_timestamp,omitempty"`
-	Status                TargetStatus         `json:"status"`
-	CreatedAt          time.Time            `json:"created_at"`
-	UpdatedAt          time.Time            `json:"updated_at"`
+	ID                          string               `json:"id"`
+	Name                        string               `json:"name"`
+	RootDomain                  string               `json:"root_domain"`
+	PrimaryRootDomain           string               `json:"primary_root_domain,omitempty"`
+	AllowedDomains              []string             `json:"allowed_domains"`
+	AllowedURLPatterns          []string             `json:"allowed_url_patterns"`
+	ExcludedPatterns            []string             `json:"excluded_patterns"`
+	ScopeConfig                 *AdvancedScopeConfig `json:"scope_config,omitempty"`
+	RawScopeJSON                string               `json:"raw_scope_json,omitempty"`
+	ScopeImportID               string               `json:"scope_import_id,omitempty"`
+	CanonicalScopeSHA256        string               `json:"canonical_scope_sha256,omitempty"`
+	CanonicalScopeHash          string               `json:"canonical_scope_hash,omitempty"`
+	AuthorizationSnapshotSHA256 string               `json:"authorization_snapshot_sha256,omitempty"`
+	ConfirmedBy                 string               `json:"confirmed_by,omitempty"`
+	ConfirmationTimestamp       *time.Time           `json:"confirmation_timestamp,omitempty"`
+	Status                      TargetStatus         `json:"status"`
+	CreatedAt                   time.Time            `json:"created_at"`
+	UpdatedAt                   time.Time            `json:"updated_at"`
 }
 
 // AdvancedScopeRule defines fine-grained regex matching matching Burp Suite and Bug Bounty schemas.

@@ -729,6 +729,51 @@ export const ScopeVerifierView: React.FC<ScopeVerifierViewProps> = ({
                         </div>
                       </div>
 
+                      {/* Cryptographic Provenance & Distinct Hash Display (Requirement 22) */}
+                      <div className="rounded-lg border border-slate-800 bg-slate-950 p-3.5 space-y-2.5">
+                        <div className="text-xs font-semibold text-slate-200 flex items-center justify-between">
+                          <span className="flex items-center gap-1.5">
+                            <ShieldCheck className="h-3.5 w-3.5 text-sky-400" />
+                            Cryptographic Scope Provenance
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-normal">Deterministic SHA-256</span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px]">
+                          <div className="p-2 rounded bg-slate-900 border border-slate-800/80">
+                            <span className="text-[10px] text-slate-400 uppercase font-semibold block">Canonical Scope Hash</span>
+                            <span className="font-mono text-emerald-400 truncate block select-all" title={selectedReview.canonical_scope_sha256}>
+                              {selectedReview.canonical_scope_sha256 || '—'}
+                            </span>
+                            <span className="text-[9px] text-slate-500">Hash of canonical authorization rules</span>
+                          </div>
+                          <div className="p-2 rounded bg-slate-900 border border-slate-800/80">
+                            <span className="text-[10px] text-slate-400 uppercase font-semibold block">Authorization Snapshot Hash</span>
+                            <span className="font-mono text-sky-400 truncate block select-all" title={selectedReview.authorization_snapshot_sha256 || 'Pending Confirmation'}>
+                              {selectedReview.authorization_snapshot_sha256 || 'Pending Operator Confirmation'}
+                            </span>
+                            <span className="text-[9px] text-slate-500">Hash of finalized authorization decision</span>
+                          </div>
+                          <div className="p-2 rounded bg-slate-900 border border-slate-800/80">
+                            <span className="text-[10px] text-slate-400 uppercase font-semibold block">Original File Hash</span>
+                            <span className="font-mono text-slate-300 truncate block select-all" title={selectedReview.original_file_sha256}>
+                              {selectedReview.original_file_sha256 || '—'}
+                            </span>
+                          </div>
+                          <div className="p-2 rounded bg-slate-900 border border-slate-800/80">
+                            <span className="text-[10px] text-slate-400 uppercase font-semibold block">Normalization Manifest Hash</span>
+                            <span className="font-mono text-slate-300 truncate block select-all" title={selectedReview.normalization_manifest_sha256}>
+                              {selectedReview.normalization_manifest_sha256 || '—'}
+                            </span>
+                          </div>
+                        </div>
+                        {selectedReview.confirmed_by && (
+                          <div className="pt-1.5 border-t border-slate-800/60 flex items-center justify-between text-[10px] text-slate-400">
+                            <span>Operator: <span className="text-white font-medium">{selectedReview.confirmed_by}</span></span>
+                            <span>Confirmed: <span className="text-white font-medium">{selectedReview.confirmed_at ? new Date(selectedReview.confirmed_at).toLocaleString() : '—'}</span></span>
+                          </div>
+                        )}
+                      </div>
+
                       {/* Root Domain Selection for Target Creation */}
                       {selectedReview.status !== 'CONFIRMED' && selectedReview.root_domains && selectedReview.root_domains.length > 0 && (
                         <div className="rounded-lg border border-sky-900/60 bg-sky-950/30 p-4 space-y-3">

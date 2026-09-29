@@ -200,17 +200,39 @@ func (p *PostgresStorage) scanEvidence(s rowScanner) (*models.Evidence, error) {
 	ev.Source = models.EvidenceSource(sourceStr)
 	ev.EvidenceType = models.EvidenceType(typeStr)
 
-	_ = json.Unmarshal(reqRaw, &ev.Request)
-	_ = json.Unmarshal(respRaw, &ev.Response)
-	_ = json.Unmarshal(headersRaw, &ev.RelevantHeaders)
-	_ = json.Unmarshal(redirRaw, &ev.RedirectChain)
-	_ = json.Unmarshal(dnsRaw, &ev.DNSContext)
-	_ = json.Unmarshal(tlsRaw, &ev.TLSMetadata)
-	_ = json.Unmarshal(valRaw, &ev.ValidationContext)
-	_ = json.Unmarshal(scopeRaw, &ev.ScopeDecision)
-	_ = json.Unmarshal(redRaw, &ev.RedactionStatus)
-	_ = json.Unmarshal(provRaw, &ev.Provenance)
-	_ = json.Unmarshal(metaRaw, &ev.Metadata)
+	if err := safeUnmarshal(reqRaw, &ev.Request, "evidence.request"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(respRaw, &ev.Response, "evidence.response"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(headersRaw, &ev.RelevantHeaders, "evidence.relevant_headers"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(redirRaw, &ev.RedirectChain, "evidence.redirect_chain"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(dnsRaw, &ev.DNSContext, "evidence.dns_context"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(tlsRaw, &ev.TLSMetadata, "evidence.tls_metadata"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(valRaw, &ev.ValidationContext, "evidence.validation_context"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(scopeRaw, &ev.ScopeDecision, "evidence.scope_decision"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(redRaw, &ev.RedactionStatus, "evidence.redaction_status"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(provRaw, &ev.Provenance, "evidence.provenance"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(metaRaw, &ev.Metadata, "evidence.metadata"); err != nil {
+		return nil, err
+	}
 
 	return ev, nil
 }
@@ -259,9 +281,15 @@ func (p *PostgresStorage) GetEvidenceDiff(ctx context.Context, id string) (*mode
 		return nil, err
 	}
 
-	_ = json.Unmarshal(rawJSON, &diff.RawDiff)
-	_ = json.Unmarshal(semJSON, &diff.SemanticDiff)
-	_ = json.Unmarshal(secJSON, &diff.SecurityDiff)
+	if err := safeUnmarshal(rawJSON, &diff.RawDiff, "evidence_diff.raw_diff"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(semJSON, &diff.SemanticDiff, "evidence_diff.semantic_diff"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(secJSON, &diff.SecurityDiff, "evidence_diff.security_diff"); err != nil {
+		return nil, err
+	}
 
 	return diff, nil
 }
@@ -290,9 +318,15 @@ func (p *PostgresStorage) ListEvidenceDiffs(ctx context.Context, targetID string
 		); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(rawJSON, &diff.RawDiff)
-		_ = json.Unmarshal(semJSON, &diff.SemanticDiff)
-		_ = json.Unmarshal(secJSON, &diff.SecurityDiff)
+		if err := safeUnmarshal(rawJSON, &diff.RawDiff, "evidence_diff.raw_diff"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(semJSON, &diff.SemanticDiff, "evidence_diff.semantic_diff"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(secJSON, &diff.SecurityDiff, "evidence_diff.security_diff"); err != nil {
+			return nil, err
+		}
 		list = append(list, diff)
 	}
 	return list, rows.Err()
@@ -345,7 +379,9 @@ func (p *PostgresStorage) ListSecurityExpectations(ctx context.Context, targetID
 		}
 		exp.Source = models.ExpectedModelSource(sourceStr)
 		exp.ExpectedState = models.EpistemicObservationState(stateStr)
-		_ = json.Unmarshal(rulesJSON, &exp.RuleDetails)
+		if err := safeUnmarshal(rulesJSON, &exp.RuleDetails, "expected_state.rule_details"); err != nil {
+			return nil, err
+		}
 		list = append(list, exp)
 	}
 	return list, rows.Err()
@@ -416,8 +452,12 @@ func (p *PostgresStorage) GetSecurityContradiction(ctx context.Context, id strin
 	con.ContradictionType = models.ContradictionType(typeStr)
 	con.Status = models.ContradictionStatus(statusStr)
 	con.ObservedState = models.EpistemicObservationState(stateStr)
-	_ = json.Unmarshal(refsJSON, &con.EvidenceRefs)
-	_ = json.Unmarshal(followupJSON, &con.SuggestedFollowup)
+	if err := safeUnmarshal(refsJSON, &con.EvidenceRefs, "security_contradiction.evidence_refs"); err != nil {
+		return nil, err
+	}
+	if err := safeUnmarshal(followupJSON, &con.SuggestedFollowup, "security_contradiction.suggested_followup"); err != nil {
+		return nil, err
+	}
 
 	return con, nil
 }
@@ -453,8 +493,12 @@ func (p *PostgresStorage) ListSecurityContradictions(ctx context.Context, target
 		con.ContradictionType = models.ContradictionType(typeStr)
 		con.Status = models.ContradictionStatus(statusStr)
 		con.ObservedState = models.EpistemicObservationState(stateStr)
-		_ = json.Unmarshal(refsJSON, &con.EvidenceRefs)
-		_ = json.Unmarshal(followupJSON, &con.SuggestedFollowup)
+		if err := safeUnmarshal(refsJSON, &con.EvidenceRefs, "security_contradiction.evidence_refs"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(followupJSON, &con.SuggestedFollowup, "security_contradiction.suggested_followup"); err != nil {
+			return nil, err
+		}
 		list = append(list, con)
 	}
 	return list, rows.Err()
@@ -509,8 +553,12 @@ func (p *PostgresStorage) ListSecurityOutliers(ctx context.Context, targetID, as
 		); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(refsJSON, &out.EvidenceRefs)
-		_ = json.Unmarshal(detailsJSON, &out.Details)
+		if err := safeUnmarshal(refsJSON, &out.EvidenceRefs, "security_outlier.evidence_refs"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(detailsJSON, &out.Details, "security_outlier.details"); err != nil {
+			return nil, err
+		}
 		list = append(list, out)
 	}
 	return list, rows.Err()
@@ -568,8 +616,12 @@ func (p *PostgresStorage) ListTimelineEvents(ctx context.Context, targetID, asse
 			return nil, err
 		}
 		ev.EpistemicStatus = models.EpistemicStatus(statusStr)
-		_ = json.Unmarshal(provJSON, &ev.Provenance)
-		_ = json.Unmarshal(detailsJSON, &ev.Details)
+		if err := safeUnmarshal(provJSON, &ev.Provenance, "timeline_event.provenance"); err != nil {
+			return nil, err
+		}
+		if err := safeUnmarshal(detailsJSON, &ev.Details, "timeline_event.details"); err != nil {
+			return nil, err
+		}
 		list = append(list, ev)
 	}
 	return list, rows.Err()

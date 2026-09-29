@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"sort"
 	"sync"
 	"time"
 
@@ -12,13 +14,69 @@ import (
 )
 
 var (
-	ErrJobNotFound     = errors.New("scan job not found")
-	ErrInvalidState    = errors.New("invalid job state transition")
-	ErrMissingTarget   = errors.New("target id is required to create a scan job")
-	ErrMissingJobType  = errors.New("job type is required")
-	ErrTargetNotFound  = errors.New("associated target does not exist")
-	ErrTargetNotActive = errors.New("cannot execute scan job for inactive or archived target")
+	ErrJobNotFound      = errors.New("scan job not found")
+	ErrJobStateConflict = errors.New("job state transition conflict")
+	ErrInvalidState     = errors.New("invalid job state transition")
+	ErrMissingTarget    = errors.New("target id is required to create a scan job")
+	ErrMissingJobType   = errors.New("job type is required")
+	ErrTargetNotFound   = errors.New("associated target does not exist")
+	ErrTargetNotActive  = errors.New("cannot execute scan job for inactive or archived target")
 )
+
+// Deep copy helpers (Requirement 4)
+func deepCopyScanJob(job *models.ScanJob) *models.ScanJob {
+	if job == nil {
+		return nil
+	}
+	cp := *job
+	if job.StartedAt != nil {
+		t := *job.StartedAt
+		cp.StartedAt = &t
+	}
+	if job.CompletedAt != nil {
+		t := *job.CompletedAt
+		cp.CompletedAt = &t
+	}
+	cp.Metadata = deepCopyMap(job.Metadata)
+	return &cp
+}
+
+func deepCopyMap(m map[string]interface{}) map[string]interface{} {
+	if m == nil {
+		return nil
+	}
+	res := make(map[string]interface{}, len(m))
+	for k, v := range m {
+		res[k] = deepCopyValue(v)
+	}
+	return res
+}
+
+func deepCopyValue(v interface{}) interface{} {
+	if v == nil {
+		return nil
+	}
+	switch val := v.(type) {
+	case map[string]interface{}:
+		return deepCopyMap(val)
+	case []interface{}:
+		res := make([]interface{}, len(val))
+		for i, elem := range val {
+			res[i] = deepCopyValue(elem)
+		}
+		return res
+	case []string:
+		res := make([]string, len(val))
+		copy(res, val)
+		return res
+	case []int:
+		res := make([]int, len(val))
+		copy(res, val)
+		return res
+	default:
+		return val
+	}
+}
 
 // TargetChecker checks if a target exists and is currently active.
 type TargetChecker interface {
@@ -40,10 +98,13 @@ type JobRepository interface {
 	ListJobs(ctx context.Context, targetID string) ([]*models.ScanJob, error)
 	UpdateJob(ctx context.Context, job *models.ScanJob) error
 	UpdateJobWithAuditEvent(ctx context.Context, job *models.ScanJob, event *models.Event) error
+	TransitionJobWithAuditEvent(ctx context.Context, job *models.ScanJob, expectedOldStatus []models.JobStatus, event *models.Event) error
 	DeleteJob(ctx context.Context, id string) error
 }
 
-// MemoryJobRepository provides in-memory durable job storage for development and test harnesses.
+// MemoryJobRepository provides in-memory job storage for development and test harnesses.
+// Architectural Notice (Requirement 5):
+// PROCESS_LOCAL_ONLY, NON_DURABLE. Does not survive process restarts.
 type MemoryJobRepository struct {
 	mu   sync.RWMutex
 	jobs map[string]*models.ScanJob
@@ -59,16 +120,14 @@ func NewMemoryJobRepository() *MemoryJobRepository {
 func (m *MemoryJobRepository) CreateJob(ctx context.Context, job *models.ScanJob) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	cp := *job
-	m.jobs[job.ID] = &cp
+	m.jobs[job.ID] = deepCopyScanJob(job)
 	return nil
 }
 
 func (m *MemoryJobRepository) CreateJobWithAuditEvent(ctx context.Context, job *models.ScanJob, event *models.Event) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	cp := *job
-	m.jobs[job.ID] = &cp
+	m.jobs[job.ID] = deepCopyScanJob(job)
 	return nil
 }
 
@@ -79,8 +138,7 @@ func (m *MemoryJobRepository) GetJobByID(ctx context.Context, id string) (*model
 	if !exists {
 		return nil, ErrJobNotFound
 	}
-	cp := *j
-	return &cp, nil
+	return deepCopyScanJob(j), nil
 }
 
 func (m *MemoryJobRepository) ListJobs(ctx context.Context, targetID string) ([]*models.ScanJob, error) {
@@ -89,32 +147,54 @@ func (m *MemoryJobRepository) ListJobs(ctx context.Context, targetID string) ([]
 	var res []*models.ScanJob
 	for _, j := range m.jobs {
 		if targetID == "" || j.TargetID == targetID {
-			cp := *j
-			res = append(res, &cp)
+			res = append(res, deepCopyScanJob(j))
 		}
 	}
+	// Deterministic sorting matching PostgreSQL (Requirement 3): created_at DESC, tie-breaker id DESC
+	sort.Slice(res, func(i, j int) bool {
+		if res[i].CreatedAt.Equal(res[j].CreatedAt) {
+			return res[i].ID > res[j].ID
+		}
+		return res[i].CreatedAt.After(res[j].CreatedAt)
+	})
 	return res, nil
 }
 
 func (m *MemoryJobRepository) UpdateJob(ctx context.Context, job *models.ScanJob) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, exists := m.jobs[job.ID]; !exists {
-		return ErrJobNotFound
-	}
-	cp := *job
-	m.jobs[job.ID] = &cp
-	return nil
+	return m.TransitionJobWithAuditEvent(ctx, job, nil, nil)
 }
 
 func (m *MemoryJobRepository) UpdateJobWithAuditEvent(ctx context.Context, job *models.ScanJob, event *models.Event) error {
+	var expected []models.JobStatus
+	if event != nil && event.PreviousState != "" {
+		expected = []models.JobStatus{models.JobStatus(event.PreviousState)}
+	}
+	return m.TransitionJobWithAuditEvent(ctx, job, expected, event)
+}
+
+func (m *MemoryJobRepository) TransitionJobWithAuditEvent(ctx context.Context, job *models.ScanJob, expectedOldStatus []models.JobStatus, event *models.Event) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, exists := m.jobs[job.ID]; !exists {
+
+	curr, exists := m.jobs[job.ID]
+	if !exists {
 		return ErrJobNotFound
 	}
-	cp := *job
-	m.jobs[job.ID] = &cp
+
+	if len(expectedOldStatus) > 0 {
+		matched := false
+		for _, s := range expectedOldStatus {
+			if curr.Status == s {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return fmt.Errorf("%w: job '%s' expected status in %v but found '%s'", ErrJobStateConflict, job.ID, expectedOldStatus, curr.Status)
+		}
+	}
+
+	m.jobs[job.ID] = deepCopyScanJob(job)
 	return nil
 }
 
@@ -226,13 +306,19 @@ func (m *Manager) persistJobCreate(ctx context.Context, job *models.ScanJob, eve
 	return nil
 }
 
-// persistJobUpdate executes atomic update of job state and audit event.
-func (m *Manager) persistJobUpdate(ctx context.Context, job *models.ScanJob, event *models.Event) error {
-	if atomicRepo, ok := m.repo.(interface {
+// persistJobTransition executes atomic update of job state and audit event guarded by database-side CAS.
+func (m *Manager) persistJobTransition(ctx context.Context, job *models.ScanJob, expectedOldStatus []models.JobStatus, event *models.Event) error {
+	if casRepo, ok := m.repo.(interface {
+		TransitionJobWithAuditEvent(ctx context.Context, job *models.ScanJob, expectedOldStatus []models.JobStatus, event *models.Event) error
+	}); ok {
+		if err := casRepo.TransitionJobWithAuditEvent(ctx, job, expectedOldStatus, event); err != nil {
+			return err
+		}
+	} else if atomicRepo, ok := m.repo.(interface {
 		UpdateJobWithAuditEvent(ctx context.Context, job *models.ScanJob, event *models.Event) error
 	}); ok {
 		if err := atomicRepo.UpdateJobWithAuditEvent(ctx, job, event); err != nil {
-			return fmt.Errorf("failed to persist job transition and audit event atomically: %w", err)
+			return err
 		}
 	} else {
 		if err := m.repo.UpdateJob(ctx, job); err != nil {
@@ -245,8 +331,12 @@ func (m *Manager) persistJobUpdate(ctx context.Context, job *models.ScanJob, eve
 		}
 	}
 
+	// Requirement 2: Publish to in-memory bus AFTER transaction commit.
+	// If bus publish fails, log structured error, do NOT claim durable audit failed, do NOT rollback DB transaction.
 	if m.eventBus != nil && event != nil {
-		_ = m.eventBus.Publish(ctx, *event)
+		if pubErr := m.eventBus.Publish(ctx, *event); pubErr != nil {
+			log.Printf("[DEGRADED_BUS_DELIVERY] event_id=%s job_id=%s err=%v", event.EventID, job.ID, pubErr)
+		}
 	}
 	return nil
 }
@@ -281,7 +371,7 @@ func (m *Manager) CreateJob(ctx context.Context, targetID string, jobType string
 		Type:      jobType,
 		Status:    models.JobStatusQueued,
 		CreatedAt: now,
-		Metadata:  metadata,
+		Metadata:  deepCopyMap(metadata),
 	}
 
 	auditEvent := &models.Event{
@@ -302,7 +392,7 @@ func (m *Manager) CreateJob(ctx context.Context, targetID string, jobType string
 			"previous_state": "",
 			"new_state":      string(models.JobStatusQueued),
 			"job_type":       job.Type,
-			"metadata":       metadata,
+			"metadata":       deepCopyMap(metadata),
 		},
 	}
 
@@ -310,8 +400,7 @@ func (m *Manager) CreateJob(ctx context.Context, targetID string, jobType string
 		return nil, err
 	}
 
-	copied := *job
-	return &copied, nil
+	return deepCopyScanJob(job), nil
 }
 
 // GetJob retrieves a scan job by its identifier.
@@ -319,7 +408,11 @@ func (m *Manager) GetJob(ctx context.Context, id string) (*models.ScanJob, error
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	return m.repo.GetJobByID(ctx, id)
+	j, err := m.repo.GetJobByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return deepCopyScanJob(j), nil
 }
 
 // ListJobs retrieves all jobs, optionally filtered by targetID.
@@ -330,7 +423,7 @@ func (m *Manager) ListJobs(ctx context.Context, targetID string) ([]*models.Scan
 	return m.repo.ListJobs(ctx, targetID)
 }
 
-// StartJob transitions a QUEUED job to RUNNING. Idempotent if already RUNNING.
+// StartJob transitions a QUEUED job to RUNNING guarded by optimistic CAS.
 func (m *Manager) StartJob(ctx context.Context, id string) (*models.ScanJob, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -346,11 +439,10 @@ func (m *Manager) StartJob(ctx context.Context, id string) (*models.ScanJob, err
 
 	// Idempotency: duplicate start returns existing running job without state corruption
 	if job.Status == models.JobStatusRunning {
-		copied := *job
-		return &copied, nil
+		return deepCopyScanJob(job), nil
 	}
 
-	// Reject all invalid transitions (e.g. COMPLETED -> RUNNING, FAILED -> RUNNING, CANCELLED -> RUNNING)
+	// Reject invalid transitions
 	if job.Status != models.JobStatusQueued {
 		return nil, fmt.Errorf("%w: cannot start job in state %s", ErrInvalidState, job.Status)
 	}
@@ -382,15 +474,14 @@ func (m *Manager) StartJob(ctx context.Context, id string) (*models.ScanJob, err
 		},
 	}
 
-	if err := m.persistJobUpdate(ctx, job, auditEvent); err != nil {
+	if err := m.persistJobTransition(ctx, job, []models.JobStatus{models.JobStatusQueued}, auditEvent); err != nil {
 		return nil, err
 	}
 
-	copied := *job
-	return &copied, nil
+	return deepCopyScanJob(job), nil
 }
 
-// CompleteJob transitions a RUNNING job to COMPLETED. Idempotent if already COMPLETED.
+// CompleteJob transitions a RUNNING job to COMPLETED guarded by optimistic CAS.
 func (m *Manager) CompleteJob(ctx context.Context, id string) (*models.ScanJob, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -406,11 +497,10 @@ func (m *Manager) CompleteJob(ctx context.Context, id string) (*models.ScanJob, 
 
 	// Idempotency: duplicate complete returns existing completed job
 	if job.Status == models.JobStatusCompleted {
-		copied := *job
-		return &copied, nil
+		return deepCopyScanJob(job), nil
 	}
 
-	// Reject invalid transitions (e.g. QUEUED -> COMPLETED, FAILED -> COMPLETED, CANCELLED -> COMPLETED)
+	// Reject invalid transitions
 	if job.Status != models.JobStatusRunning {
 		return nil, fmt.Errorf("%w: cannot complete job in state %s", ErrInvalidState, job.Status)
 	}
@@ -442,16 +532,14 @@ func (m *Manager) CompleteJob(ctx context.Context, id string) (*models.ScanJob, 
 		},
 	}
 
-	if err := m.persistJobUpdate(ctx, job, auditEvent); err != nil {
+	if err := m.persistJobTransition(ctx, job, []models.JobStatus{models.JobStatusRunning}, auditEvent); err != nil {
 		return nil, err
 	}
 
-	copied := *job
-	return &copied, nil
+	return deepCopyScanJob(job), nil
 }
 
-// FailJob transitions a RUNNING job to FAILED with error documentation.
-// Rejects QUEUED -> FAILED, COMPLETED -> FAILED, CANCELLED -> FAILED.
+// FailJob transitions a RUNNING job to FAILED guarded by optimistic CAS.
 func (m *Manager) FailJob(ctx context.Context, id string, failureReason string) (*models.ScanJob, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -467,11 +555,10 @@ func (m *Manager) FailJob(ctx context.Context, id string, failureReason string) 
 
 	// Idempotency: duplicate failure returns existing failed job
 	if job.Status == models.JobStatusFailed {
-		copied := *job
-		return &copied, nil
+		return deepCopyScanJob(job), nil
 	}
 
-	// Reject QUEUED -> FAILED, COMPLETED -> FAILED, CANCELLED -> FAILED
+	// Reject invalid transitions
 	if job.Status != models.JobStatusRunning {
 		return nil, fmt.Errorf("%w: cannot fail job in state %s (must be RUNNING)", ErrInvalidState, job.Status)
 	}
@@ -505,16 +592,14 @@ func (m *Manager) FailJob(ctx context.Context, id string, failureReason string) 
 		},
 	}
 
-	if err := m.persistJobUpdate(ctx, job, auditEvent); err != nil {
+	if err := m.persistJobTransition(ctx, job, []models.JobStatus{models.JobStatusRunning}, auditEvent); err != nil {
 		return nil, err
 	}
 
-	copied := *job
-	return &copied, nil
+	return deepCopyScanJob(job), nil
 }
 
-// CancelJob transitions an active (QUEUED or RUNNING) job to CANCELLED.
-// Rejects terminal states: COMPLETED -> CANCELLED, FAILED -> CANCELLED.
+// CancelJob transitions an active (QUEUED or RUNNING) job to CANCELLED guarded by optimistic CAS.
 func (m *Manager) CancelJob(ctx context.Context, id string) (*models.ScanJob, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -530,8 +615,7 @@ func (m *Manager) CancelJob(ctx context.Context, id string) (*models.ScanJob, er
 
 	// Idempotency: duplicate cancel returns existing cancelled job
 	if job.Status == models.JobStatusCancelled {
-		copied := *job
-		return &copied, nil
+		return deepCopyScanJob(job), nil
 	}
 
 	// Reject cancelling terminal jobs
@@ -566,12 +650,11 @@ func (m *Manager) CancelJob(ctx context.Context, id string) (*models.ScanJob, er
 		},
 	}
 
-	if err := m.persistJobUpdate(ctx, job, auditEvent); err != nil {
+	if err := m.persistJobTransition(ctx, job, []models.JobStatus{models.JobStatusQueued, models.JobStatusRunning}, auditEvent); err != nil {
 		return nil, err
 	}
 
-	copied := *job
-	return &copied, nil
+	return deepCopyScanJob(job), nil
 }
 
 // HandleTargetDeactivated cancels all active (QUEUED or RUNNING) jobs for a target that was deactivated or deleted.
@@ -611,8 +694,77 @@ func (m *Manager) HandleTargetDeactivated(ctx context.Context, targetID string) 
 					"error":          "target deactivated or deleted: lifecycle violation fail-closed",
 				},
 			}
-			_ = m.persistJobUpdate(ctx, job, auditEvent)
+			_ = m.persistJobTransition(ctx, job, []models.JobStatus{models.JobStatusQueued, models.JobStatusRunning}, auditEvent)
 		}
 	}
 	return nil
+}
+
+// ReconstructJobLifecycle audits the event sequence for a given job and derives the final reconstructed state (Requirement 17).
+func ReconstructJobLifecycle(eventsList []*models.Event) (models.JobStatus, error) {
+	if len(eventsList) == 0 {
+		return "", errors.New("no audit events to reconstruct lifecycle")
+	}
+
+	// Sort events chronologically ASC, tie-breaker event_id ASC
+	sorted := make([]*models.Event, len(eventsList))
+	copy(sorted, eventsList)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Timestamp.Equal(sorted[j].Timestamp) {
+			return sorted[i].EventID < sorted[j].EventID
+		}
+		return sorted[i].Timestamp.Before(sorted[j].Timestamp)
+	})
+
+	var current models.JobStatus
+	for i, evt := range sorted {
+		switch evt.EventType {
+		case models.EventJobCreated:
+			if i != 0 {
+				return "", fmt.Errorf("unexpected JOB_CREATED event at step %d", i)
+			}
+			if evt.NewState != string(models.JobStatusQueued) {
+				return "", fmt.Errorf("JOB_CREATED event has invalid new_state: %s", evt.NewState)
+			}
+			current = models.JobStatusQueued
+
+		case models.EventJobStarted:
+			if current != models.JobStatusQueued {
+				return "", fmt.Errorf("cannot transition to RUNNING from state %s (event_id=%s)", current, evt.EventID)
+			}
+			if evt.PreviousState != string(models.JobStatusQueued) || evt.NewState != string(models.JobStatusRunning) {
+				return "", fmt.Errorf("inconsistent states in JOB_STARTED: prev=%s, new=%s", evt.PreviousState, evt.NewState)
+			}
+			current = models.JobStatusRunning
+
+		case models.EventJobCompleted:
+			if current != models.JobStatusRunning {
+				return "", fmt.Errorf("cannot transition to COMPLETED from state %s (event_id=%s)", current, evt.EventID)
+			}
+			if evt.PreviousState != string(models.JobStatusRunning) || evt.NewState != string(models.JobStatusCompleted) {
+				return "", fmt.Errorf("inconsistent states in JOB_COMPLETED: prev=%s, new=%s", evt.PreviousState, evt.NewState)
+			}
+			current = models.JobStatusCompleted
+
+		case models.EventJobFailed:
+			if current != models.JobStatusRunning {
+				return "", fmt.Errorf("cannot transition to FAILED from state %s (event_id=%s)", current, evt.EventID)
+			}
+			if evt.PreviousState != string(models.JobStatusRunning) || evt.NewState != string(models.JobStatusFailed) {
+				return "", fmt.Errorf("inconsistent states in JOB_FAILED: prev=%s, new=%s", evt.PreviousState, evt.NewState)
+			}
+			current = models.JobStatusFailed
+
+		case models.EventJobCancelled:
+			if current != models.JobStatusQueued && current != models.JobStatusRunning {
+				return "", fmt.Errorf("cannot transition to CANCELLED from terminal state %s (event_id=%s)", current, evt.EventID)
+			}
+			if evt.NewState != string(models.JobStatusCancelled) {
+				return "", fmt.Errorf("invalid new_state in JOB_CANCELLED: %s", evt.NewState)
+			}
+			current = models.JobStatusCancelled
+		}
+	}
+
+	return current, nil
 }

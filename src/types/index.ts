@@ -6,13 +6,23 @@ export interface Target {
   id: string;
   name: string;
   root_domain: string;
+  primary_root_domain?: string;
   allowed_domains: string[];
   allowed_url_patterns: string[];
   excluded_patterns: string[];
+  scope_import_id?: string;
+  canonical_scope_sha256?: string;
+  canonical_scope_hash?: string;
+  authorization_snapshot_sha256?: string;
+  confirmed_by?: string;
+  confirmation_timestamp?: string;
   status: TargetStatus;
   created_at: string;
   updated_at: string;
 }
+
+export type StorageMode = 'POSTGRES' | 'MEMORY' | 'UNAVAILABLE';
+export type SecurityResponseStatus = 'SUCCESS' | 'SUCCESS_EMPTY' | 'ERROR' | 'OFFLINE' | 'PARTIAL' | 'CONFLICT' | 'UNVERIFIED';
 
 export interface TargetScopeRule {
   id: string;
@@ -1027,13 +1037,13 @@ export interface SecurityControlRecord {
 // Phase 8.2R: UI Truth Layer & Runtime Integrity
 // ==========================================
 
-export type RuntimeMode = 'LIVE' | 'DEMO' | 'OFFLINE' | 'PARTIAL' | 'UNKNOWN';
+export type RuntimeMode = 'LIVE' | 'DEMO' | 'LIVE_BACKEND' | 'DEMO_SYNTHETIC' | 'OFFLINE' | 'PARTIAL' | 'UNKNOWN';
 
 export type RequestState = 'IDLE' | 'LOADING' | 'SUCCESS_DATA' | 'SUCCESS_EMPTY' | 'ERROR' | 'OFFLINE' | 'PARTIAL';
 
 export type RequestStatus = 'IDLE' | 'LOADING' | 'SUCCESS' | 'ERROR' | 'OFFLINE';
 
-export type DataOrigin = 'LIVE_BACKEND' | 'DEMO_SYNTHETIC' | 'DERIVED' | 'SIMULATED' | 'OFFLINE' | 'UNVERIFIED';
+export type DataOrigin = 'LIVE_BACKEND' | 'DEMO_SYNTHETIC' | 'POSTGRES_AUTHORITATIVE' | 'DERIVED' | 'SIMULATED' | 'OFFLINE' | 'UNVERIFIED';
 
 export interface DataResponse<T> {
   status: RequestStatus;
@@ -1096,6 +1106,7 @@ export interface ScopeImportReview {
   original_file_sha256: string;
   canonical_scope_sha256: string;
   normalization_manifest_sha256: string;
+  authorization_snapshot_sha256?: string;
   selection_reason?: string;
   target_id?: string;
   confirmed_by?: string;
