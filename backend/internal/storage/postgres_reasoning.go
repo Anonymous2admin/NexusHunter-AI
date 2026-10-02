@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/models"
@@ -367,10 +368,22 @@ func (p *PostgresStorage) SaveHypothesis(ctx context.Context, hyp *models.Hypoth
 		return err
 	}
 
-	for _, fc := range hyp.FalsificationConditions {
+	for i, fc := range hyp.FalsificationConditions {
+		if fc.ID == "" {
+			fc.ID = fmt.Sprintf("fc-%d-%d", time.Now().UnixNano(), i)
+		}
+		if fc.HypothesisID == "" {
+			fc.HypothesisID = hyp.ID
+		}
 		_ = p.SaveFalsificationCondition(ctx, &fc)
 	}
-	for _, req := range hyp.MissingEvidence {
+	for i, req := range hyp.MissingEvidence {
+		if req.ID == "" {
+			req.ID = fmt.Sprintf("req-%d-%d", time.Now().UnixNano(), i)
+		}
+		if req.HypothesisID == "" {
+			req.HypothesisID = hyp.ID
+		}
 		_ = p.SaveEvidenceRequirement(ctx, &req)
 	}
 

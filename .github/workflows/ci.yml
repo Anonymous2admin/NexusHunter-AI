@@ -1,0 +1,83 @@
+name: NexusHunter-AI CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  backend-and-integration:
+    name: Backend, Database & Integration Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: nexushunter
+          POSTGRES_PASSWORD: huntersecret123
+          POSTGRES_DB: nexushunter_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: backend/go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install PostgreSQL Client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Run Database Migrations
+        env:
+          PGPASSWORD: huntersecret123
+        run: |
+          for f in $(ls backend/migrations/*.up.sql | sort); do
+            echo "Applying migration: $f"
+            psql -h localhost -p 5432 -U nexushunter -d nexushunter_db -f "$f"
+          done
+
+      - name: Go Vet
+        run: go vet ./backend/...
+
+      - name: Go Unit Tests (with -race)
+        run: go test -race ./backend/internal/...
+
+      - name: Compile Backend Server Binary
+        run: go build -o ./backend/bin/server ./backend/cmd/server
+
+      - name: Backend Integration Tests
+        env:
+          DATABASE_URL: postgres://nexushunter:huntersecret123@127.0.0.1:5432/nexushunter_db?sslmode=disable
+        run: go test -v -race ./backend/integration/...
+
+      - name: Install Node Dependencies
+        run: npm ci || npm install
+
+      - name: Frontend Lint (TypeScript check)
+        run: npm run lint
+
+      - name: Frontend Build
+        run: npm run build
+
+      - name: Frontend & Integration Tests
+        env:
+          DATABASE_URL: postgres://nexushunter:huntersecret123@127.0.0.1:5432/nexushunter_db?sslmode=disable
+        run: npm test

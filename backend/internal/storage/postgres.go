@@ -34,6 +34,19 @@ func (p *PostgresStorage) Create(ctx context.Context, target *models.Target) err
 		primaryRoot = target.RootDomain
 	}
 
+	allowedDomains := target.AllowedDomains
+	if allowedDomains == nil {
+		allowedDomains = []string{}
+	}
+	allowedURLs := target.AllowedURLPatterns
+	if allowedURLs == nil {
+		allowedURLs = []string{}
+	}
+	excludedPatterns := target.ExcludedPatterns
+	if excludedPatterns == nil {
+		excludedPatterns = []string{}
+	}
+
 	query := `
 		INSERT INTO targets (
 			id, name, root_domain, primary_root_domain, allowed_domains, allowed_url_patterns, excluded_patterns, status,
@@ -47,9 +60,9 @@ func (p *PostgresStorage) Create(ctx context.Context, target *models.Target) err
 		target.Name,
 		target.RootDomain,
 		primaryRoot,
-		strings.Join(target.AllowedDomains, ","),
-		strings.Join(target.AllowedURLPatterns, ","),
-		strings.Join(target.ExcludedPatterns, ","),
+		pq.Array(allowedDomains),
+		pq.Array(allowedURLs),
+		pq.Array(excludedPatterns),
 		string(target.Status),
 		target.ScopeImportID,
 		canonScopeSHA,
@@ -734,10 +747,12 @@ func splitNonEmpty(s string) []string {
 	if s == "" {
 		return []string{}
 	}
+	s = strings.TrimPrefix(s, "{")
+	s = strings.TrimSuffix(s, "}")
 	parts := strings.Split(s, ",")
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
-		trimmed := strings.TrimSpace(p)
+		trimmed := strings.Trim(strings.TrimSpace(p), "\"")
 		if trimmed != "" {
 			out = append(out, trimmed)
 		}

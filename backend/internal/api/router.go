@@ -25,6 +25,7 @@ func NewRouter(h *Handler, logger *slog.Logger) http.Handler {
 	mux.HandleFunc("PUT /api/targets/{id}", h.UpdateTarget)
 	mux.HandleFunc("DELETE /api/targets/{id}", h.DeleteTarget)
 	mux.HandleFunc("GET /api/targets/{id}/assets", h.ListTargetAssets)
+	mux.HandleFunc("POST /api/targets/{id}/assets", h.CreateTargetAsset)
 	mux.HandleFunc("GET /api/targets/{id}/urls", h.ListTargetURLs)
 
 	// Asset Intelligence & Fingerprinting
@@ -132,13 +133,18 @@ func NewRouter(h *Handler, logger *slog.Logger) http.Handler {
 	mux.HandleFunc("POST /api/auth-contexts", h.CreateAuthContext)
 
 	mux.HandleFunc("POST /api/reasoning/analyze", h.TriggerReasoningCycle)
+	mux.HandleFunc("POST /api/reasoning/cycle", h.TriggerReasoningCycle)
 	mux.HandleFunc("POST /api/reasoning/ai-assist", h.AIAssistedReasoning)
 
 	// Phase 8: Scope Intelligence & Sanitization
 	mux.HandleFunc("POST /api/targets/import-scope", h.ImportScope)
+	mux.HandleFunc("POST /api/scope/import", h.ImportScope)
 	mux.HandleFunc("GET /api/scope-imports", h.ListScopeImports)
+	mux.HandleFunc("GET /api/scope/imports", h.ListScopeImports)
 	mux.HandleFunc("GET /api/scope-imports/{id}", h.GetScopeImport)
+	mux.HandleFunc("GET /api/scope/imports/{id}", h.GetScopeImport)
 	mux.HandleFunc("POST /api/scope-imports/{id}/confirm", h.ConfirmScopeImport)
+	mux.HandleFunc("POST /api/scope/imports/{id}/confirm", h.ConfirmScopeImport)
 
 	// Phase 8: JavaScript Asset Intelligence & Structural Extraction
 	mux.HandleFunc("GET /api/targets/{id}/js-assets", h.ListTargetJSAssets)

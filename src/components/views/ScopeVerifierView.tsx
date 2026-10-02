@@ -415,7 +415,7 @@ export const ScopeVerifierView: React.FC<ScopeVerifierViewProps> = ({
               : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
           }`}
         >
-          <Layers className="h-3.5 w-3.5" /> Bounded Hunting Planner
+          <Layers className="h-3.5 w-3.5" /> Evidence-Grounded Investigation Planner
           {plans.length > 0 && (
             <span className="px-1.5 py-0.2 rounded-full bg-slate-800 text-[10px] text-slate-300">
               {plans.length}
@@ -1051,7 +1051,7 @@ export const ScopeVerifierView: React.FC<ScopeVerifierViewProps> = ({
             <div>
               <h3 className="text-sm font-semibold text-white flex items-center gap-2">
                 <Layers className="h-4 w-4 text-sky-400" />
-                Bounded Multi-Step Investigation Plans
+                Evidence-Grounded Investigation Planner
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
                 Plans strictly enforce human-in-the-loop authorization gates before executing each step.

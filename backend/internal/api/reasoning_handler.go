@@ -253,8 +253,8 @@ func (h *Handler) UpdateHypothesisStatus(w http.ResponseWriter, r *http.Request)
 	}
 
 	if req.Status == models.HypothesisStatusSupported {
-		if err := h.reasoningRepo.UpdateHypothesisStatusWithGuard(r.Context(), id, models.HypothesisStatusHypothesized, req.Status); err != nil {
-			Error(w, http.StatusConflict, "CONCURRENT_MODIFICATION", "hypothesis status transition conflict; must be HYPOTHESIZED", err.Error())
+		if err := h.reasoningRepo.UpdateHypothesisStatusWithGuard(r.Context(), id, hyp.Status, req.Status); err != nil {
+			Error(w, http.StatusConflict, "CONCURRENT_MODIFICATION", fmt.Sprintf("hypothesis status transition conflict; expected %s", hyp.Status), err.Error())
 			return
 		}
 	} else {

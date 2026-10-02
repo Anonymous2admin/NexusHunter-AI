@@ -21,6 +21,12 @@ func (p *PostgresStorage) SaveEvidence(ctx context.Context, ev *models.Evidence)
 	scopeJSON, _ := json.Marshal(ev.ScopeDecision)
 	redactionJSON, _ := json.Marshal(ev.RedactionStatus)
 	provJSON, _ := json.Marshal(ev.Provenance)
+	if ev.Metadata == nil {
+		ev.Metadata = make(map[string]interface{})
+	}
+	if ev.DataOrigin != "" {
+		ev.Metadata["data_origin"] = ev.DataOrigin
+	}
 	metaJSON, _ := json.Marshal(ev.Metadata)
 
 	query := `
@@ -232,6 +238,9 @@ func (p *PostgresStorage) scanEvidence(s rowScanner) (*models.Evidence, error) {
 	}
 	if err := safeUnmarshal(metaRaw, &ev.Metadata, "evidence.metadata"); err != nil {
 		return nil, err
+	}
+	if orig, ok := ev.Metadata["data_origin"].(string); ok && orig != "" {
+		ev.DataOrigin = orig
 	}
 
 	return ev, nil

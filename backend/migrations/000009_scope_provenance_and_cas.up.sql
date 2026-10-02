@@ -6,5 +6,12 @@ ALTER TABLE targets ADD COLUMN IF NOT EXISTS canonical_scope_sha256 VARCHAR(64);
 ALTER TABLE targets ADD COLUMN IF NOT EXISTS authorization_snapshot_sha256 VARCHAR(64);
 ALTER TABLE targets ADD COLUMN IF NOT EXISTS confirmed_by VARCHAR(128);
 
+ALTER TABLE events ADD COLUMN IF NOT EXISTS correlation_id VARCHAR(64);
+ALTER TABLE events ADD COLUMN IF NOT EXISTS previous_state VARCHAR(32);
+ALTER TABLE events ADD COLUMN IF NOT EXISTS new_state VARCHAR(32);
+ALTER TABLE events ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+
+ALTER TABLE scope_imports ADD COLUMN IF NOT EXISTS confirmed_by VARCHAR(128);
+
 -- Ensure a scope import can produce at most one target (one-to-one scope confirmation invariant)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_targets_scope_import_id_unique ON targets(scope_import_id) WHERE scope_import_id IS NOT NULL AND scope_import_id != '';

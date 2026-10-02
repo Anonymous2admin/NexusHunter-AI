@@ -50,6 +50,14 @@ class ApiClient {
     this.baseURL = baseURL;
   }
 
+  public setBaseURL(url: string) {
+    this.baseURL = url;
+  }
+
+  public getBaseURL(): string {
+    return this.baseURL;
+  }
+
   public getLastOrigin(): 'LIVE_BACKEND' | 'DEMO_SYNTHETIC' | 'OFFLINE' {
     return this.lastOrigin;
   }

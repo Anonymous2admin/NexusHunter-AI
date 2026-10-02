@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lib/pq"
 	"github.com/nexushunter-ai/nexushunter-ai/backend/internal/models"
 )
 
@@ -301,39 +302,35 @@ func (s *PostgresPhase8Storage) ConfirmScopeAndCreateTarget(
 	targetCopy.UpdatedAt = now
 
 	// 2. INSERT target
-	allowedDomainsJSON, err := json.Marshal(targetCopy.AllowedDomains)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to marshal allowed domains: %w", err)
+	allowedDomains := targetCopy.AllowedDomains
+	if allowedDomains == nil {
+		allowedDomains = []string{}
 	}
-	allowedURLsJSON, err := json.Marshal(targetCopy.AllowedURLPatterns)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to marshal allowed url patterns: %w", err)
+	allowedURLs := targetCopy.AllowedURLPatterns
+	if allowedURLs == nil {
+		allowedURLs = []string{}
 	}
-	excludedPatternsJSON, err := json.Marshal(targetCopy.ExcludedPatterns)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to marshal excluded patterns: %w", err)
-	}
-	scopeConfigJSON, err := json.Marshal(targetCopy.ScopeConfig)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to marshal scope config: %w", err)
+	excludedPatterns := targetCopy.ExcludedPatterns
+	if excludedPatterns == nil {
+		excludedPatterns = []string{}
 	}
 
 	insertTargetQuery := `
 		INSERT INTO targets (
 			id, name, root_domain, primary_root_domain, allowed_domains, allowed_url_patterns,
-			excluded_patterns, scope_config, scope_import_id, canonical_scope_sha256,
+			excluded_patterns, scope_import_id, canonical_scope_sha256,
 			canonical_scope_hash, authorization_snapshot_sha256, confirmed_by,
 			confirmation_timestamp, status, created_at, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6,
 			$7, $8, $9, $10,
 			$11, $12, $13,
-			$14, $15, $16, $17
+			$14, $15, $16
 		);
 	`
 	if _, err := tx.ExecContext(ctx, insertTargetQuery,
 		targetCopy.ID, targetCopy.Name, targetCopy.RootDomain, targetCopy.PrimaryRootDomain,
-		allowedDomainsJSON, allowedURLsJSON, excludedPatternsJSON, scopeConfigJSON,
+		pq.Array(allowedDomains), pq.Array(allowedURLs), pq.Array(excludedPatterns),
 		targetCopy.ScopeImportID, targetCopy.CanonicalScopeSHA256, targetCopy.CanonicalScopeHash,
 		targetCopy.AuthorizationSnapshotSHA256, targetCopy.ConfirmedBy,
 		targetCopy.ConfirmationTimestamp, targetCopy.Status, targetCopy.CreatedAt, targetCopy.UpdatedAt,

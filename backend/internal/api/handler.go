@@ -225,7 +225,80 @@ func (h *Handler) CreateTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.reconRepo != nil && target.RootDomain != "" {
+		_ = h.reconRepo.SaveAsset(r.Context(), &models.Asset{
+			ID:        "ast-" + target.ID,
+			TargetID:  target.ID,
+			Hostname:  target.RootDomain,
+			AssetType: models.AssetTypeSubdomain,
+			Status:    models.AssetStatusActive,
+			FirstSeen: time.Now().UTC(),
+			LastSeen:  time.Now().UTC(),
+		})
+	}
+
 	Success(w, http.StatusCreated, target)
+}
+
+// CreateTargetAsset handles POST /api/targets/{id}/assets
+func (h *Handler) CreateTargetAsset(w http.ResponseWriter, r *http.Request) {
+	targetID := r.PathValue("id")
+	if targetID == "" {
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if len(parts) >= 3 {
+			targetID = parts[2]
+		}
+	}
+
+	target, err := h.storage.GetByID(r.Context(), targetID)
+	if err != nil || target == nil {
+		Error(w, http.StatusNotFound, "TARGET_NOT_FOUND", "target does not exist", targetID)
+		return
+	}
+
+	var req struct {
+		ID        string             `json:"id"`
+		Hostname  string             `json:"hostname"`
+		AssetType models.AssetType   `json:"asset_type"`
+		Status    models.AssetStatus `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		Error(w, http.StatusBadRequest, "INVALID_PAYLOAD", "failed to parse JSON body", err.Error())
+		return
+	}
+
+	assetID := strings.TrimSpace(req.ID)
+	if assetID == "" {
+		assetID = events.GenerateID("ast")
+	}
+	hostname := strings.ToLower(strings.TrimSpace(req.Hostname))
+	if hostname == "" {
+		hostname = target.RootDomain
+	}
+
+	asset := &models.Asset{
+		ID:        assetID,
+		TargetID:  targetID,
+		Hostname:  hostname,
+		AssetType: req.AssetType,
+		Status:    req.Status,
+		FirstSeen: time.Now().UTC(),
+		LastSeen:  time.Now().UTC(),
+	}
+	if asset.AssetType == "" {
+		asset.AssetType = models.AssetTypeSubdomain
+	}
+	if asset.Status == "" {
+		asset.Status = models.AssetStatusActive
+	}
+
+	if h.reconRepo != nil {
+		if err := h.reconRepo.SaveAsset(r.Context(), asset); err != nil {
+			Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to save asset", err.Error())
+			return
+		}
+	}
+	Success(w, http.StatusCreated, asset)
 }
 
 // ListTargets handles GET /api/targets

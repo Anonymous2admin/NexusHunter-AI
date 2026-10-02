@@ -254,6 +254,7 @@ func (h *Handler) ConfirmScopeImport(w http.ResponseWriter, r *http.Request) {
 		"status":                        "CONFIRMED",
 		"target_id":                     createdTarget.ID,
 		"selected_root":                 selectedRoot,
+		"selected_root_domain":          selectedRoot,
 		"confirmed_by":                  confirmedBy,
 		"source_import_id":              confirmedReview.ID,
 		"canonical_scope_sha256":        confirmedReview.CanonicalScopeSHA256,
