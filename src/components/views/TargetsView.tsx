@@ -181,6 +181,7 @@ export const TargetsView: React.FC<TargetsViewProps> = ({
 
         <button
           type="button"
+          data-testid="add-target-btn"
           onClick={() => setIsModalOpen(true)}
           className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-sky-500 transition-colors self-start sm:self-auto"
         >
@@ -200,13 +201,15 @@ export const TargetsView: React.FC<TargetsViewProps> = ({
           onAction={() => setIsModalOpen(true)}
         />
       ) : (
-        <DataTable
-          id="targets-table"
-          columns={columns}
-          data={targets}
-          keyExtractor={(t) => t.id}
-          onRowClick={(t) => setSelectedTarget(t)}
-        />
+        <div data-testid="targets-table">
+          <DataTable
+            id="targets-table-inner"
+            columns={columns}
+            data={targets}
+            keyExtractor={(t) => t.id}
+            onRowClick={(t) => setSelectedTarget(t)}
+          />
+        </div>
       )}
 
       {/* Target Detail Drawer Modal */}
@@ -313,7 +316,7 @@ export const TargetsView: React.FC<TargetsViewProps> = ({
 
             <form onSubmit={handleSubmit} className="mt-4 space-y-4 text-xs font-sans">
               {formError && (
-                <div className="rounded-lg border border-rose-900/80 bg-rose-950/40 p-3 text-rose-400 font-mono text-[11px]">
+                <div data-testid="form-error" className="rounded-lg border border-rose-900/80 bg-rose-950/40 p-3 text-rose-400 font-mono text-[11px]">
                   {formError}
                 </div>
               )}
@@ -324,6 +327,7 @@ export const TargetsView: React.FC<TargetsViewProps> = ({
                 </label>
                 <input
                   type="text"
+                  data-testid="target-name-input"
                   required
                   value={name}
                   onChange={(e) => setName(e.target.value)}
@@ -338,6 +342,7 @@ export const TargetsView: React.FC<TargetsViewProps> = ({
                 </label>
                 <input
                   type="text"
+                  data-testid="target-root-domain-input"
                   required
                   value={rootDomain}
                   onChange={(e) => setRootDomain(e.target.value)}
@@ -352,6 +357,7 @@ export const TargetsView: React.FC<TargetsViewProps> = ({
                 </label>
                 <textarea
                   rows={2}
+                  data-testid="target-allowed-domains-input"
                   value={allowedDomains}
                   onChange={(e) => setAllowedDomains(e.target.value)}
                   placeholder="e.g. acme.com, *.acme.com, api.partner-acme.net"
@@ -398,6 +404,7 @@ export const TargetsView: React.FC<TargetsViewProps> = ({
                 </button>
                 <button
                   type="submit"
+                  data-testid="submit-target-btn"
                   disabled={isSubmitting}
                   className="rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
                 >

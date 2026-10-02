@@ -55,21 +55,24 @@ jobs:
           done
 
       - name: Go Vet
-        run: go vet ./backend/...
+        run: |
+          cd backend
+          go vet ./...
 
-      - name: Go Unit Tests (with -race)
-        run: go test -race ./backend/internal/...
-
-      - name: Compile Backend Server Binary
-        run: go build -o ./backend/bin/server ./backend/cmd/server
-
-      - name: Backend Integration Tests
+      - name: Go Unit & Integration Tests (with -race)
         env:
           DATABASE_URL: postgres://nexushunter:huntersecret123@127.0.0.1:5432/nexushunter_db?sslmode=disable
-        run: go test -v -race ./backend/integration/...
+        run: |
+          cd backend
+          go test -v -race ./...
+
+      - name: Compile Backend Server Binary
+        run: |
+          go build -o ./backend/bin/server ./backend/cmd/server
+          chmod +x ./backend/bin/server
 
       - name: Install Node Dependencies
-        run: npm ci || npm install
+        run: npm ci
 
       - name: Frontend Lint (TypeScript check)
         run: npm run lint
@@ -77,7 +80,7 @@ jobs:
       - name: Frontend Build
         run: npm run build
 
-      - name: Frontend & Integration Tests
+      - name: Authoritative Test Suite
         env:
           DATABASE_URL: postgres://nexushunter:huntersecret123@127.0.0.1:5432/nexushunter_db?sslmode=disable
         run: npm test

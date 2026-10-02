@@ -10,6 +10,7 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test": "tsx --test tests/**/*.test.ts tests/*.test.ts e2e/**/*.test.ts",
+    "test:contract": "tsx --test tests/phase8_2r_contract.test.ts",
     "test:integration": "tsx --test tests/integration/**/*.test.ts",
     "test:e2e": "tsx --test e2e/**/*.test.ts"
   },
@@ -26,6 +27,7 @@
     "motion": "^12.23.24"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/express": "^4.17.21",
     "@types/jsdom": "^30.0.0",
     "@types/node": "^22.14.0",

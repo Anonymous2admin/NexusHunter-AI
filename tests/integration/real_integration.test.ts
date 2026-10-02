@@ -1,6 +1,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync, ChildProcess } from 'node:child_process';
+import fs from 'node:fs';
 
 const TEST_PORT = 8086;
 const BASE_URL = `http://127.0.0.1:${TEST_PORT}`;
@@ -32,6 +33,7 @@ describe('Phase 8.2R-PROOF: Real Go HTTP API & PostgreSQL Integration', () => {
   let serverProcess: ChildProcess | null = null;
 
   before(async () => {
+    try { fs.chmodSync('./backend/bin/server', 0o755); } catch {}
     // Start actual compiled Go server on isolated port
     serverProcess = spawn('./backend/bin/server', [], {
       env: {

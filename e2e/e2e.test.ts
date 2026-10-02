@@ -1,6 +1,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync, ChildProcess } from 'node:child_process';
+import fs from 'node:fs';
 import { JSDOM } from 'jsdom';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
@@ -42,6 +43,7 @@ describe('Phase 8.2R-PROOF: Frontend E2E & Authoritative Mode Verification', () 
     }
 
     // 2. Start real Go server on E2E_PORT
+    try { fs.chmodSync('./backend/bin/server', 0o755); } catch {}
     serverProcess = spawn('./backend/bin/server', [], {
       env: {
         ...process.env,

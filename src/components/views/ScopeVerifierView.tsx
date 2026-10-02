@@ -357,6 +357,7 @@ export const ScopeVerifierView: React.FC<ScopeVerifierViewProps> = ({
 
         <button
           type="button"
+          data-testid="scope-tab-import"
           onClick={() => setActiveTab('scope-import')}
           className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors ${
             activeTab === 'scope-import'
@@ -645,6 +646,7 @@ export const ScopeVerifierView: React.FC<ScopeVerifierViewProps> = ({
                   </label>
                   <textarea
                     rows={8}
+                    data-testid="scope-manifest-input"
                     value={importFileInput}
                     onChange={(e) => setImportFileInput(e.target.value)}
                     placeholder={`{\n  "target": {\n    "scope": {\n      "include": [\n        { "prefix": "https://api.example.com", "enabled": true }\n      ]\n    }\n  }\n}`}
@@ -654,6 +656,7 @@ export const ScopeVerifierView: React.FC<ScopeVerifierViewProps> = ({
 
                 <button
                   type="submit"
+                  data-testid="import-scope-submit-btn"
                   disabled={isImporting}
                   className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
                 >
@@ -792,6 +795,7 @@ export const ScopeVerifierView: React.FC<ScopeVerifierViewProps> = ({
                             {selectedReview.root_domains.map((rd) => (
                               <div
                                 key={rd.id}
+                                data-testid={`root-candidate-${rd.normalized_domain}`}
                                 onClick={() => setSelectedRootCandidate(rd.normalized_domain)}
                                 className={`flex items-center gap-2.5 p-2 rounded border cursor-pointer font-mono text-xs transition-colors ${
                                   selectedRootCandidate === rd.normalized_domain
@@ -810,13 +814,14 @@ export const ScopeVerifierView: React.FC<ScopeVerifierViewProps> = ({
                             ))}
                           </div>
                           <div className="flex items-center justify-between pt-2">
-                            <span className="text-[10px] text-slate-400">
+                            <span data-testid="selected-root-candidate-text" className="text-[10px] text-slate-400">
                               {selectedRootCandidate
                                 ? `Selected: ${selectedRootCandidate}`
                                 : 'No root domain selected — Confirmation disabled'}
                             </span>
                             <button
                               type="button"
+                              data-testid="confirm-scope-btn"
                               disabled={!selectedRootCandidate}
                               onClick={() => handleConfirmImport(selectedReview.id)}
                               className="inline-flex items-center gap-2 rounded bg-emerald-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed"

@@ -161,6 +161,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               return (
                 <button
                   key={item.id}
+                  data-testid={`nav-${item.id}`}
                   type="button"
                   onClick={() => {
                     onSelectTab(item.id);

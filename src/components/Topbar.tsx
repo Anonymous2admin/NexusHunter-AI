@@ -1,6 +1,7 @@
 import React from 'react';
 import { Menu, ShieldCheck, Cpu, RefreshCw } from 'lucide-react';
 import { HealthResponse } from '../types';
+import { useRuntime } from '../context/RuntimeContext';
 
 interface TopbarProps {
   id?: string;
@@ -21,6 +22,9 @@ export const Topbar: React.FC<TopbarProps> = ({
   onRefresh,
   isRefreshing = false,
 }) => {
+  const { mode: runtimeMode } = useRuntime();
+  const effectiveMode = runtimeMode || (health?.mode === 'LIVE' ? 'LIVE' : health?.mode === 'DEMO_FALLBACK' ? 'DEMO' : 'OFFLINE');
+
   return (
     <header
       id={id}
@@ -43,38 +47,41 @@ export const Topbar: React.FC<TopbarProps> = ({
       </div>
 
       <div className="flex items-center gap-3 font-mono text-xs">
-        {/* Health status pill with explicit LIVE / DEMO / OFFLINE differentiation */}
+        {/* Health status pill with explicit LIVE / DEMO / OFFLINE / UNKNOWN differentiation */}
         <div
           id="topbar-connection-indicator"
+          data-testid="runtime-indicator"
           className={`flex items-center gap-1.5 sm:gap-2 rounded-full border px-2.5 py-1 ${
-            health?.mode === 'LIVE'
+            effectiveMode === 'LIVE'
               ? 'border-emerald-800/80 bg-emerald-950/40 text-emerald-300'
-              : health?.mode === 'DEMO_FALLBACK'
+              : effectiveMode === 'DEMO'
               ? 'border-amber-800/80 bg-amber-950/40 text-amber-300'
+              : effectiveMode === 'UNKNOWN'
+              ? 'border-purple-800/80 bg-purple-950/40 text-purple-300'
               : 'border-rose-800/80 bg-rose-950/40 text-rose-300'
           }`}
         >
           <span
             className={`h-2 w-2 rounded-full shrink-0 ${
-              health?.mode === 'LIVE'
+              effectiveMode === 'LIVE'
                 ? 'bg-emerald-400 animate-pulse'
-                : health?.mode === 'DEMO_FALLBACK'
+                : effectiveMode === 'DEMO'
                 ? 'bg-amber-400'
+                : effectiveMode === 'UNKNOWN'
+                ? 'bg-purple-400'
                 : 'bg-rose-400'
             }`}
           />
-          <span className="text-[10px] sm:text-[11px] font-medium tracking-wide">
-            {health?.mode === 'LIVE'
-              ? 'LIVE'
-              : health?.mode === 'DEMO_FALLBACK'
-              ? 'DEMO'
-              : 'OFFLINE'}
+          <span data-testid="runtime-mode-text" className="text-[10px] sm:text-[11px] font-medium tracking-wide">
+            {effectiveMode}
           </span>
           <span className="hidden md:inline text-[10px] opacity-75">
-            {health?.mode === 'LIVE'
+            {effectiveMode === 'LIVE'
               ? '(ENGINE)'
-              : health?.mode === 'DEMO_FALLBACK'
+              : effectiveMode === 'DEMO'
               ? '(SYNTHETIC)'
+              : effectiveMode === 'UNKNOWN'
+              ? '(UNVERIFIED)'
               : '(NO BACKEND)'}
           </span>
         </div>
