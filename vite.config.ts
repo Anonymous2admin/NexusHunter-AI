@@ -1771,17 +1771,18 @@ function nexusApiPlugin(): Plugin {
           req.on('end', () => resolve(Buffer.concat(chunks)));
         });
 
-        // Attempt live proxy to Go backend on port 8081
+        // Attempt live proxy to Go backend on port BACKEND_PORT || 8081
+        const backendPort = Number(process.env.BACKEND_PORT || 8081);
         const proxied = await new Promise<boolean>((resolve) => {
           const proxyReq = http.request(
             {
               hostname: '127.0.0.1',
-              port: 8081,
+              port: backendPort,
               path: req.url,
               method: req.method,
               headers: {
                 ...req.headers,
-                host: '127.0.0.1:8081',
+                host: `127.0.0.1:${backendPort}`,
               },
               timeout: 2000,
             },
@@ -1808,6 +1809,20 @@ function nexusApiPlugin(): Plugin {
 
         if (proxied) {
           return;
+        }
+
+        if (process.env.VITE_DISABLE_DEMO_FALLBACK === 'true') {
+          res.statusCode = 503;
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('X-Nexus-Origin', 'OFFLINE');
+          res.setHeader('X-Nexus-Mode', 'OFFLINE');
+          return res.end(JSON.stringify({
+            error: 'BACKEND_OFFLINE',
+            message: 'Live Go backend is unavailable and demo fallback is disabled in this mode',
+            runtime_mode: 'OFFLINE',
+            storage_mode: 'UNAVAILABLE',
+            data_origin: 'OFFLINE',
+          }));
         }
 
         res.setHeader('Content-Type', 'application/json');

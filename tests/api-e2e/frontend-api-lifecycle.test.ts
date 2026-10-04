@@ -5,8 +5,8 @@ import fs from 'node:fs';
 import { JSDOM } from 'jsdom';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { api } from '../src/lib/api';
-import { Target, ScanJob, ScopeImportReview } from '../src/types';
+import { api } from '../../src/lib/api';
+import { Target, ScanJob, ScopeImportReview } from '../../src/types';
 
 const E2E_PORT = 8088;
 const E2E_BASE_URL = `http://127.0.0.1:${E2E_PORT}`;
@@ -21,7 +21,7 @@ function runSQL(sql: string) {
   return res.stdout;
 }
 
-describe('Phase 8.2R-PROOF: Frontend E2E & Authoritative Mode Verification', () => {
+describe('Phase 8.2R-PROOF: REAL API + BACKEND E2E & Authoritative Mode Verification', () => {
   let serverProcess: ChildProcess | null = null;
   let dom: JSDOM;
 

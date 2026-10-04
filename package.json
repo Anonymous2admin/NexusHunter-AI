@@ -9,10 +9,11 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx --test tests/**/*.test.ts tests/*.test.ts e2e/**/*.test.ts",
     "test:contract": "tsx --test tests/phase8_2r_contract.test.ts",
     "test:integration": "tsx --test tests/integration/**/*.test.ts",
-    "test:e2e": "tsx --test e2e/**/*.test.ts"
+    "test:api-e2e": "tsx --test tests/api-e2e/**/*.test.ts",
+    "test:browser-e2e": "playwright test",
+    "test": "npm run test:contract && npm run test:integration && npm run test:api-e2e && npm run test:browser-e2e"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
