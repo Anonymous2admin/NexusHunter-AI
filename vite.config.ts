@@ -1846,6 +1846,9 @@ function nexusApiPlugin(): Plugin {
               status: 'ok',
               service: 'nexushunter-api',
               mode: 'DEMO_FALLBACK',
+              runtime_mode: 'DEMO_SYNTHETIC',
+              storage_mode: 'MEMORY',
+              data_origin: 'DEMO_SYNTHETIC',
               time: new Date().toISOString(),
             })
           );

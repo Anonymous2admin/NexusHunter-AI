@@ -597,11 +597,17 @@ class ApiClient {
   }
 
   async getAssetTrustBoundaries(assetId: string, targetId?: string): Promise<any[]> {
+    if (!assetId) {
+      return [];
+    }
     const q = targetId ? `?target_id=${encodeURIComponent(targetId)}` : '';
     return this.request<any[]>(`/api/assets/${encodeURIComponent(assetId)}/trust-boundaries${q}`);
   }
 
   async getAssetPermissionMatrix(assetId: string, targetId?: string): Promise<any[]> {
+    if (!assetId) {
+      return [];
+    }
     const q = targetId ? `?target_id=${encodeURIComponent(targetId)}` : '';
     return this.request<any[]>(`/api/assets/${encodeURIComponent(assetId)}/permission-matrix${q}`);
   }
@@ -614,6 +620,9 @@ class ApiClient {
   }
 
   async getAssetSecurityControls(assetId: string, targetId?: string): Promise<any[]> {
+    if (!assetId) {
+      return [];
+    }
     const q = targetId ? `?target_id=${encodeURIComponent(targetId)}` : '';
     return this.request<any[]>(`/api/assets/${encodeURIComponent(assetId)}/security-controls${q}`);
   }

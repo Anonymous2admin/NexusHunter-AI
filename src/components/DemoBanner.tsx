@@ -133,15 +133,30 @@ export const DemoBanner: React.FC = () => {
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={clearRuntimeError}
-            className="p-1 rounded text-rose-400 hover:text-rose-100 hover:bg-rose-900/50 shrink-0"
-            title="Dismiss error notice"
-            aria-label="Dismiss error"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {mode === 'DEMO' && !allowDemoMutations && (
+              <button
+                type="button"
+                onClick={() => {
+                  setAllowDemoMutations(true);
+                  clearRuntimeError();
+                }}
+                className="px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-sans text-xs font-semibold shrink-0"
+              >
+                Enable Sandbox Writes
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={clearRuntimeError}
+              className="p-1 rounded text-rose-400 hover:text-rose-100 hover:bg-rose-900/50 shrink-0"
+              title="Dismiss error notice"
+              aria-label="Dismiss error"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       )}
     </div>

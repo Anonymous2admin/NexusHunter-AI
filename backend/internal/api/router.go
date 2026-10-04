@@ -125,9 +125,12 @@ func NewRouter(h *Handler, logger *slog.Logger) http.Handler {
 	mux.HandleFunc("GET /api/assets/{id}/hypotheses", h.ListAssetHypotheses)
 	mux.HandleFunc("GET /api/assets/{id}/investigations", h.ListAssetInvestigations)
 	mux.HandleFunc("GET /api/assets/{id}/trust-boundaries", h.ListAssetTrustBoundaries)
+	mux.HandleFunc("GET /api/trust-boundaries", h.ListAssetTrustBoundaries)
 	mux.HandleFunc("GET /api/assets/{id}/permission-matrix", h.ListAssetPermissionMatrix)
+	mux.HandleFunc("GET /api/permission-matrix", h.ListAssetPermissionMatrix)
 	mux.HandleFunc("POST /api/assets/{id}/permission-matrix", h.RecordPermissionMatrixEntry)
 	mux.HandleFunc("GET /api/assets/{id}/security-controls", h.ListAssetSecurityControls)
+	mux.HandleFunc("GET /api/security-controls", h.ListAssetSecurityControls)
 
 	mux.HandleFunc("GET /api/auth-contexts", h.ListAuthContexts)
 	mux.HandleFunc("POST /api/auth-contexts", h.CreateAuthContext)
