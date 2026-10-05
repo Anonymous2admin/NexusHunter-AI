@@ -28,10 +28,12 @@ nexushunter-ai/
 │   ├── migrations/       # PostgreSQL DDL migrations (up/down)
 │   ├── go.mod            # Go module definition
 │   └── go.sum            # Module checksums
-├── frontend/             # Next.js / React Dark Security Dashboard
-│   ├── components/       # Reusable components (Sidebar, Topbar, MetricCard, DataTable, etc.)
+├── src/                  # Vite + React SPA Security Operations Dashboard
+│   ├── components/       # Reusable components (Sidebar, Topbar, DemoBanner, Views)
+│   ├── context/          # Authoritative RuntimeContext provider
 │   ├── lib/              # Centralized typed API client (api.ts)
 │   └── types/            # TypeScript interfaces aligned with Go models
+├── tests/                # Verification test suites (contract, integration, api-e2e, browser-e2e)
 ├── configs/              # Environment templates and example YAML
 ├── docs/                 # Architecture, Scope, and API documentation
 ├── scripts/              # Migration and testing automation scripts

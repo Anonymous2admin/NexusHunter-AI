@@ -2,6 +2,12 @@ node_modules/
 build/
 dist/
 coverage/
+.nyc_output/
+.pytest_cache/
+__pycache__/
+test-results/
+playwright-report/
+coverage.out
 .DS_Store
 *.log
 .env*

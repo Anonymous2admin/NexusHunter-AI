@@ -42,6 +42,10 @@ export const RuntimeProvider: React.FC<{ children: ReactNode }> = ({ children })
 
       if (rawRuntimeMode === 'LIVE_BACKEND' && rawStorageMode === 'POSTGRES') {
         setMode('LIVE');
+      } else if (rawRuntimeMode === 'OFFLINE' || rawStorageMode === 'UNAVAILABLE' || h.mode === 'OFFLINE') {
+        setMode('OFFLINE');
+      } else if (rawRuntimeMode === 'PARTIAL' || h.mode === 'PARTIAL') {
+        setMode('PARTIAL');
       } else if (
         rawRuntimeMode === 'DEMO_SYNTHETIC' ||
         rawStorageMode === 'MEMORY' ||
@@ -49,10 +53,6 @@ export const RuntimeProvider: React.FC<{ children: ReactNode }> = ({ children })
         api.getLastOrigin() === 'DEMO_SYNTHETIC'
       ) {
         setMode('DEMO');
-      } else if (rawRuntimeMode === 'PARTIAL' || h.mode === 'PARTIAL') {
-        setMode('PARTIAL');
-      } else if (rawRuntimeMode === 'OFFLINE' || rawStorageMode === 'UNAVAILABLE' || h.mode === 'OFFLINE') {
-        setMode('OFFLINE');
       } else {
         // Unexpected or malformed mode must be UNKNOWN, NOT DEMO
         setMode('UNKNOWN');

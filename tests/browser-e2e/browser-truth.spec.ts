@@ -254,13 +254,113 @@ test.describe('Phase 8.2R-PROOF.2: Real Browser E2E Suite (Chromium + Vite + Rea
     await expect(unknownBanner).toBeVisible();
     await expect(unknownBanner).toContainText('RUNTIME UNKNOWN');
 
-    // Scenario C: LIVE_BACKEND + POSTGRES displays LIVE badge
+    // Scenario C: PARTIAL mode
+    await page.unroute('**/api/health');
+    await page.route('**/api/health', (route) => {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          status: 'ok',
+          runtime_mode: 'PARTIAL',
+          storage_mode: 'MEMORY',
+          data_origin: 'PARTIAL',
+        }),
+      });
+    });
+
+    await page.goto(BASE_URL);
+    await expect(modeText).toHaveText('PARTIAL');
+    const partialBanner = page.locator('#runtime-demo-banner');
+    await expect(partialBanner).toBeVisible();
+    await expect(partialBanner).toContainText('PARTIAL DEGRADATION');
+
+    // Scenario D: DEMO synthetic mode
+    await page.unroute('**/api/health');
+    await page.route('**/api/health', (route) => {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          status: 'ok',
+          runtime_mode: 'DEMO_SYNTHETIC',
+          storage_mode: 'MEMORY',
+          data_origin: 'DEMO_SYNTHETIC',
+        }),
+      });
+    });
+
+    await page.goto(BASE_URL);
+    await expect(modeText).toHaveText('DEMO');
+    const demoBanner = page.locator('#runtime-demo-banner');
+    await expect(demoBanner).toBeVisible();
+    await expect(demoBanner).toContainText('DEMO / SYNTHETIC');
+
+    // Scenario E: LIVE_BACKEND + POSTGRES displays LIVE badge
     await page.unroute('**/api/health');
     await setupLiveHealth(page);
 
     await page.goto(BASE_URL);
     await expect(modeText).toHaveText('LIVE');
     await expect(page.locator('#runtime-demo-banner')).not.toBeVisible();
+  });
+
+  // Section 14: Real Supported Gate for Security Hypotheses
+  test('Section 14: Real Supported Gate prevents premature SUPPORTED promotion without live truth', async ({ page }) => {
+    await setupLiveHealth(page);
+
+    const hypId = 'hyp-gate-test-01';
+    await page.route('**/api/hypothesis-groups**', (route) => {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            id: 'grp-01',
+            target_id: 'tgt-alpha-001',
+            subject: 'Session Auth & Gateway Handling',
+            description: 'Authentication tokens and gateway routing surface',
+            created_at: new Date().toISOString(),
+          },
+        ]),
+      });
+    });
+
+    await page.route('**/api/hypotheses**', (route) => {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            id: hypId,
+            target_id: 'tgt-alpha-001',
+            group_id: 'grp-01',
+            title: 'Hypothesized Path Traversal on Session Handler',
+            description: 'Observed relative token path in session response headers',
+            status: 'HYPOTHESIZED',
+            confidence: 0.65,
+            falsification_conditions: ['Verify absolute path normalization on gateway proxy'],
+            created_at: new Date().toISOString(),
+          },
+        ]),
+      });
+    });
+
+    await page.goto(BASE_URL);
+    await page.click('[data-testid="nav-reasoning"]');
+
+    // Verify hypothesis title is visible
+    await expect(page.locator('text=Hypothesized Path Traversal on Session Handler')).toBeVisible();
+
+    // Verify initial status is HYPOTHESIZED
+    await expect(page.locator('text=HYPOTHESIZED').first()).toBeVisible();
+
+    // Click on hypothesis card to view state machine details
+    await page.click('text=Hypothesized Path Traversal on Session Handler');
+
+    // Verify initial transitions available: INVESTIGATING and DISMISSED (SUPPORTED is gated)
+    await expect(page.locator('button:has-text("→ INVESTIGATING")')).toBeVisible();
+    await expect(page.locator('button:has-text("→ SUPPORTED")')).not.toBeVisible();
   });
 
   // Section 12: Real Error vs Empty UI Distinction

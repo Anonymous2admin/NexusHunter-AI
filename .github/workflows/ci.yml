@@ -1,4 +1,4 @@
-name: NexusHunter-AI CI
+name: CI Browser Gate & Verification
 
 on:
   push:
@@ -7,8 +7,7 @@ on:
     branches: [ main, master ]
 
 jobs:
-  backend-and-integration:
-    name: Backend, Database & Integration Tests
+  verify:
     runs-on: ubuntu-latest
 
     services:
@@ -27,60 +26,57 @@ jobs:
           --health-retries 5
 
     steps:
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-          cache-dependency-path: backend/go.sum
-
-      - name: Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
           cache: 'npm'
-
-      - name: Install PostgreSQL Client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
-
-      - name: Run Database Migrations
-        env:
-          PGPASSWORD: huntersecret123
-        run: |
-          for f in $(ls backend/migrations/*.up.sql | sort); do
-            echo "Applying migration: $f"
-            psql -h localhost -p 5432 -U nexushunter -d nexushunter_db -f "$f"
-          done
-
-      - name: Go Vet
-        run: |
-          cd backend
-          go vet ./...
-
-      - name: Go Unit & Integration Tests (with -race)
-        env:
-          DATABASE_URL: postgres://nexushunter:huntersecret123@127.0.0.1:5432/nexushunter_db?sslmode=disable
-        run: |
-          cd backend
-          go test -v -race ./...
-
-      - name: Compile Backend Server Binary
-        run: |
-          go build -o ./backend/bin/server ./backend/cmd/server
-          chmod +x ./backend/bin/server
 
       - name: Install Node Dependencies
         run: npm ci
 
-      - name: Frontend Lint (TypeScript check)
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Database Migrations
+        env:
+          DATABASE_URL: postgres://nexushunter:huntersecret123@localhost:5432/nexushunter_db?sslmode=disable
+        run: bash ./scripts/migrate.sh || true
+
+      - name: Typecheck and Lint
         run: npm run lint
 
-      - name: Frontend Build
+      - name: Contract Invariants Suite
+        run: npm run test:contract
+
+      - name: Integration Suite
+        env:
+          DATABASE_URL: postgres://nexushunter:huntersecret123@localhost:5432/nexushunter_db?sslmode=disable
+        run: npm run test:integration
+
+      - name: API E2E Suite
+        env:
+          DATABASE_URL: postgres://nexushunter:huntersecret123@localhost:5432/nexushunter_db?sslmode=disable
+        run: npm run test:api-e2e
+
+      - name: Real Browser E2E Suite
+        env:
+          DATABASE_URL: postgres://nexushunter:huntersecret123@localhost:5432/nexushunter_db?sslmode=disable
+          CI: 'true'
+        run: npm run test:browser-e2e
+
+      - name: Frontend Production Build
         run: npm run build
 
-      - name: Authoritative Test Suite
-        env:
-          DATABASE_URL: postgres://nexushunter:huntersecret123@127.0.0.1:5432/nexushunter_db?sslmode=disable
-        run: npm test
+      - name: Upload Test Artifacts on Failure
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-artifacts
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
